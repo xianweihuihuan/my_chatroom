@@ -1,0 +1,174 @@
+syntax = "proto3";
+package Xianwei;
+option cc_generic_services = true;
+
+
+message UserInfo {
+    string user_id = 1;//用户ID
+    string nickname = 2;//昵称
+    string description = 3;//个人签名/描述
+    string email = 4; //绑定手机号
+}
+enum ServerMessageType {
+    UserRegisterReqType = 0;
+    UserLoginReqType = 1;
+    EmailLoginReqType = 2;
+    EmailVcodeReqType = 3;
+    GetUserInfoReqType = 4;
+    SetNicknameReqType = 5;
+    SetEmailReqType = 6;
+    SetPassword = 7;
+}
+
+enum ClientMessageType{
+    UserRegisterRspType = 0;
+    UserLoginRspType = 1;
+    EmailLoginRspType = 2;
+    EmailVcodeRspType = 3;
+    GetUserInfoRspType = 4;
+    SetNicknameRspType = 5;
+    SetEmailRspType = 6;
+    SetPasswordRspType = 7;
+}
+
+//----------------------------
+//用户名注册   
+message UserRegisterReq {
+    string nickname = 1;
+    string password = 2;
+    string email = 3;
+    string verify_code_id = 4; 
+    string verify_code = 5;
+}
+message UserRegisterRsp {
+    bool success = 1;
+    string errmsg = 2;
+}
+
+
+//----------------------------
+//用户名登录 
+message UserLoginReq {
+    string nickname = 1;
+    string password = 2;
+}
+message UserLoginRsp {
+    bool success = 1;
+    string errmsg = 2;
+    string user_id = 3;
+    repeated string friend_name = 4;
+    repeated string group_name = 5;
+}
+
+
+//----------------------------
+//手机号验证码获取
+message EmailVerifyCodeReq {
+    string email = 1;
+}
+message EmailVerifyCodeRsp {
+    bool success = 1;
+    string errmsg = 2;
+    string verify_code_id = 3;
+    string verify_code  = 4;
+}
+//----------------------------
+
+//----------------------------
+//手机号登录
+message EmailLoginReq {
+    string email = 1;
+    string verify_code_id = 2;
+    string verify_code = 3;
+}
+message EmailLoginRsp {
+    bool success = 1;
+    string errmsg = 2;
+    string user_id = 3;
+    repeated string friend_name = 4;
+    repeated string group_name = 5;
+}
+//个人信息获取-这个只用于获取当前登录用户的信息
+//  客户端传递的时候只需要填充session_id即可
+//其他个人/好友信息的获取在好友操作中完成
+message GetUserInfoReq {
+    optional string user_id = 1;    // 这个字段是网关进行身份鉴权之后填入的字段
+}
+message GetUserInfoRsp {
+    bool success = 1;
+    string errmsg = 2; 
+    UserInfo user_info = 3;
+}
+//----------------------------
+//用户昵称修改 
+message SetUserNicknameReq {
+    string user_id = 1;
+    string nickname = 2;
+}
+message SetUserNicknameRsp {
+    bool success = 1;
+    string errmsg = 2; 
+}
+
+//----------------------------
+//用户手机修改 
+message SetUserEmailReq {
+    optional string user_id = 1;
+    string email = 2;
+    string email_verify_code_id = 3;
+    string email_verify_code = 4;
+}
+message SetUserEmailRsp {
+    bool success = 1;
+    string errmsg = 2; 
+}
+
+message SetUserPasswordReq {
+    optional string user_id = 1;
+    string password = 2;
+    string email_verify_code_id = 3;
+    string email_verify_code = 4;
+}
+message SetUserPasswordRsp{
+    bool success = 1;
+    string errmsg = 2; 
+}
+
+message UserExitReq{
+    string request_id = 1;
+    optional string user_id = 2;
+}
+message UserExitRsp{
+    string request_id = 1;
+    bool success = 2;
+    string errmsg = 3; 
+}
+
+
+message ServerMessage{
+    ServerMessageType type = 1;
+    oneof payload {
+        UserRegisterReq user_register_req = 2;
+        UserLoginReq user_login_req = 3;
+        EmailLoginReq email_login_req = 4;
+        EmailVerifyCodeReq email_verify_code_req = 5;
+        GetUserInfoReq get_user_info_req = 6;
+        SetUserNicknameReq set_user_nickname_req = 7;
+        SetUserEmailReq set_user_email_req = 8;
+        SetUserPasswordReq set_user_password_req = 9;
+    }
+}
+
+message ClientMessage{
+    ClientMessageType type = 1;
+    oneof payload {
+        UserRegisterRsp user_register_rsp = 2;
+        UserLoginRsp user_login_rsp = 3;
+        EmailLoginRsp email_login_rsp = 4;
+        EmailVerifyCodeRsp email_verify_code_rsp = 5;
+        GetUserInfoRsp get_user_info_rsp = 6;
+        SetUserNicknameRsp set_user_nickname_rsp = 7;
+        SetUserEmailRsp set_user_email_rsp = 8;
+        SetUserPasswordRsp set_user_password_rsp = 9;
+    }
+}   
