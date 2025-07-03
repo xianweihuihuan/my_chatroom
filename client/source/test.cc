@@ -43,13 +43,17 @@ int main(int argc,char*argv[]) {
   }
   vcodefd = eventfd(0, EFD_CLOEXEC);
   selfefd = eventfd(0, EFD_CLOEXEC);
+  friendefd = eventfd(0, EFD_CLOEXEC);
   Xianwei::Print();
-  std::cout <<Yellow<< "输入”start“以开始" <<Tail <<std::endl;
-  // std::string ifstart;
-  // std::cin >> ifstart;
-  // while(ifstart != "start"){
-  //   ifstart.clear();
-  //   std::cin >> ifstart;
-  // }
+  std::cout << Yellow << "输入”start“以开始：";
+  std::string ifstart;
+  std::cin >> ifstart;
+  std::cout << Tail;
+  while (ifstart != "start") {
+    std::cout <<Red<<"未知操作，请重新输入：" <<Yellow;
+    ifstart.clear();
+    std::cin >> ifstart;
+    std::cout << Tail;
+  }
   Xianwei::Start();
 }

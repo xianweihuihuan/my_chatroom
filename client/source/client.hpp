@@ -20,12 +20,17 @@
 
 Xianwei::Buffer buffer;
 SSL_CTX* ctx;
+bool ifrunning = true;
 int vcodefd;
+bool vsuccess;
 int selfefd;
+int friendefd;
+bool selfsuccess;
 SSL* ssl;
 std::string vid;
 std::string vcode;
 std::string uid;
+std::string uemail;
 std::mutex iolock;
 std::atomic<bool> running{true};
 
@@ -161,7 +166,7 @@ void UserRegister() {
     }
     auto& vcode_rsp = msg.email_verify_code_rsp();
     if (!vcode_rsp.success()) {
-      std::cout <<Red<< vcode_rsp.errmsg() <<"退出"<<Tail<< std::endl;
+      std::cout << Red << vcode_rsp.errmsg() << "退出" << Tail << std::endl;
       return;
     }
     vid = vcode_rsp.verify_code_id();
@@ -235,15 +240,143 @@ void HandleMessage(const ClientMessage& msg) {
       if (msg.set_user_nickname_rsp().success()) {
         {
           std::unique_lock<std::mutex> mtx(iolock);
-          std::cout << Green << "修改成功\n" << Tail;
+          std::cout << Green << "修改昵称成功\n" << Tail;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      if (!msg.set_user_nickname_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "修改失败，原因："
+                    << msg.set_user_nickname_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      WakeUpEventFd(selfefd);
+      break;
+    case ClientMessageType::GetUserInfoRspType:
+      if (msg.get_user_info_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "获取个人信息成功\n" << Tail;
+          std::cout << Yellow << "uid："
+                    << msg.get_user_info_rsp().user_info().user_id()
+                    << std::endl
+                    << "昵称："
+                    << msg.get_user_info_rsp().user_info().nickname()
+                    << std::endl
+                    << "邮箱：" << msg.get_user_info_rsp().user_info().email()
+                    << Tail << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "获取个人信息失败，原因："
+                    << msg.get_user_info_rsp().errmsg() << Tail << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+      WakeUpEventFd(selfefd);
+      break;
+    case ClientMessageType::FriendLoginNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "[通知]：你的好友"
+                << msg.friend_login_notice().name() << "已上线" << std::endl;
+    } break;
+    case ClientMessageType::EmailVcodeRspType:
+      if (!msg.email_verify_code_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << msg.email_verify_code_rsp().errmsg() << "退出"
+                    << Tail << std::endl;
+          vsuccess = false;
         }
       } else {
         {
           std::unique_lock<std::mutex> mtx(iolock);
-          std::cout << Red << "修改失败，原因："
-                    << msg.set_user_nickname_rsp().errmsg() << Tail;
+          std::cout << Green << "获取验证码成功" << Tail << std::endl;
+        }
+        vid = msg.email_verify_code_rsp().verify_code_id();
+        vsuccess = true;
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      WakeUpEventFd(vcodefd);
+      break;
+    case ClientMessageType::SetEmailRspType:
+      if (msg.set_user_email_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "修改邮箱成功\n" << Tail;
+        }
+        vsuccess = true;
+        selfsuccess = true;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        WakeUpEventFd(selfefd);
+      } else {
+        if (msg.set_user_email_rsp().errmsg() == "验证码错误") {
+          vsuccess = false;
+          selfsuccess = true;
+          WakeUpEventFd(selfefd);
+        } else {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Red << "修改邮箱信息失败，原因："
+                      << msg.set_user_email_rsp().errmsg() << Tail << std::endl;
+          }
+          vsuccess = true;
+          selfsuccess = false;
+          std::this_thread::sleep_for(std::chrono::seconds(3));
+          WakeUpEventFd(selfefd);
         }
       }
+      break;
+    case ClientMessageType::SetPasswordRspType:
+      if (msg.set_user_password_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "修改密码成功\n" << Tail;
+        }
+        vsuccess = true;
+        selfsuccess = true;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        WakeUpEventFd(selfefd);
+      } else {
+        if (msg.set_user_password_rsp().errmsg() == "验证码错误") {
+          vsuccess = false;
+          selfsuccess = true;
+          WakeUpEventFd(selfefd);
+        } else {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Red << "修改密码信息失败，原因："
+                      << msg.set_user_password_rsp().errmsg() << Tail
+                      << std::endl;
+          }
+          vsuccess = true;
+          selfsuccess = false;
+          std::this_thread::sleep_for(std::chrono::seconds(3));
+          WakeUpEventFd(selfefd);
+        }
+      }
+      break;
+    case ClientMessageType::EmailFriendAddRspType:
+      if (msg.email_friend_add_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "发送好友申请成功" << Tail << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "发送好友申请失败，原因："
+                    << msg.email_friend_add_rsp().errmsg() << Tail << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+      WakeUpEventFd(friendefd);
       break;
   }
 }
@@ -287,15 +420,17 @@ void UpdateNickname() {
   std::string nickname;
   {
     std::unique_lock<std::mutex> mtx(iolock);
-    std::cout << Yellow << "请输入你的昵称：";
+    std::cout << Yellow << "请输入你的新昵称：";
     std::cin >> nickname;
+    std::cout << Tail;
   }
   while (!Check_nickname(nickname)) {
     nickname.clear();
     {
       std::unique_lock<std::mutex> mtx(iolock);
-      std::cout << "用户名过长，请重新输入：";
+      std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
       std::cin >> nickname;
+      std::cout << Tail;
     }
   }
   ServerMessage req;
@@ -306,54 +441,372 @@ void UpdateNickname() {
   ReadEventfd(selfefd);
 }
 
-void about() {
+void GetUserInfo() {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GetUserInfoReqType);
+  req.mutable_get_user_info_req()->set_user_id(uid);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(selfefd);
+}
+
+void UpdateEmail() {
+  std::string newemail;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow;
+    std::cout << "请输入你的新邮箱：";
+    std::cin >> newemail;
+    std::cout << Tail;
+  }
+  while (!Check_email(newemail)) {
+    newemail.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+      std::cin >> newemail;
+      std::cout << Tail;
+    }
+  }
+  std::string ensure;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow;
+    std::cout << "现在开始获取验证码(y/n)：";
+    std::cin >> ensure;
+    std::cout << Tail;
+  }
+  while (true) {
+    if (ensure == "n" || ensure == "no") {
+      return;
+    }
+    if (ensure == "y" || ensure == "yes") {
+      break;
+    }
+    ensure.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "未知操作，请重新输入：" << Tail << Yellow;
+      std::cin >> ensure;
+      std::cout << Tail;
+    }
+  }
+  Xianwei::ServerMessage req;
+  req.set_type(ServerMessageType::EmailVcodeReqType);
+  req.mutable_email_verify_code_req()->set_email(newemail);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(vcodefd);
+  if (!vsuccess) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入验证码：";
+    std::cin >> vcode;
+    std::cout << Tail;
+  }
+  ServerMessage sreq;
+  sreq.set_type(ServerMessageType::SetEmailReqType);
+  sreq.mutable_set_user_email_req()->set_email(newemail);
+  sreq.mutable_set_user_email_req()->set_user_id(uid);
+  sreq.mutable_set_user_email_req()->set_email_verify_code_id(vid);
+  sreq.mutable_set_user_email_req()->set_email_verify_code(vcode);
+  SendToServer(sreq.SerializeAsString());
+  while (true) {
+    ReadEventfd(selfefd);
+    if (!selfsuccess && !vsuccess) {
+      vcode.clear();
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin >> vcode;
+        std::cout << Tail;
+      }
+      sreq.mutable_set_user_email_req()->set_email_verify_code(vcode);
+      SendToServer(sreq.SerializeAsString());
+      continue;
+    } else if (!selfsuccess && vsuccess) {
+      return;
+    } else {
+      uemail = newemail;
+      return;
+    }
+  }
+}
+
+void UpdatePassword() {
+  std::string password;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入你的新密码(7~14位)：";
+    std::cin >> password;
+    std::cout << Tail;
+  }
+  while (!Check_password(password)) {
+    password.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "密码不在要求范围内，请重新输入：" << Tail << Yellow;
+      std::cin >> password;
+      std::cout << Tail;
+    }
+  }
+  std::string ensure;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow;
+    std::cout << "现在开始获取验证码(y/n)：";
+    std::cin >> ensure;
+    std::cout << Tail;
+  }
+  while (true) {
+    if (ensure == "n" || ensure == "no") {
+      return;
+    }
+    if (ensure == "y" || ensure == "yes") {
+      break;
+    }
+    ensure.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "未知操作，请重新输入：" << Tail << Yellow;
+      std::cin >> ensure;
+      std::cout << Tail;
+    }
+  }
+  Xianwei::ServerMessage req;
+  req.set_type(ServerMessageType::EmailVcodeReqType);
+  req.mutable_email_verify_code_req()->set_email(uemail);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(vcodefd);
+  if (!vsuccess) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入验证码：";
+    std::cin >> vcode;
+    std::cout << Tail;
+  }
+  ServerMessage sreq;
+  sreq.set_type(ServerMessageType::SetPassword);
+  sreq.mutable_set_user_password_req()->set_password(password);
+  sreq.mutable_set_user_password_req()->set_user_id(uid);
+  sreq.mutable_set_user_password_req()->set_email_verify_code_id(vid);
+  sreq.mutable_set_user_password_req()->set_email_verify_code(vcode);
+  SendToServer(sreq.SerializeAsString());
+  while (true) {
+    ReadEventfd(selfefd);
+    if (!selfsuccess && !vsuccess) {
+      vcode.clear();
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin >> vcode;
+        std::cout << Tail;
+      }
+      sreq.mutable_set_user_password_req()->set_email_verify_code(vcode);
+      SendToServer(sreq.SerializeAsString());
+      continue;
+    } else if (!selfsuccess && vsuccess) {
+      return;
+    } else {
+      return;
+    }
+  }
+}
+
+void EmailAddFriend() {
+  std::string email;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow;
+    std::cout << "请输入对方的邮箱：";
+    std::cin >> email;
+    std::cout << Tail;
+  }
+  while (!Check_email(email)) {
+    email.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+      std::cin >> email;
+      std::cout << Tail;
+    }
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::EmailFriendAddReqType);
+  req.mutable_email_friend_add_req()->set_email(email);
+  req.mutable_email_friend_add_req()->set_user_id(uid);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(friendefd);
+}
+
+void AddFriend() {
+  int flag = 0;
+  while (true) {
+    system("clear");
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 通过邮箱添加                   |\n"
+                << "|                   (2) 通过昵称添加                   |\n"
+                << "|                   (3) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin >> flag;
+      std::cout << Tail;
+    }
+    switch (flag) {
+      case 1:
+        EmailAddFriend();
+        return;
+      case 2:
+        return;
+      case 3:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << Tail << std::endl;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        break;
+      }
+    }
+  }
+}
+
+void Friend() {
   while (true) {
     int flag = 0;
     system("clear");
-    std::cout << Cyan;
-    std::cout << " ______________________________________________________\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                   (1) 查看个人信息                   |\n"
-              << "|                   (2) 修改昵称                       |\n"
-              << "|                   (3) 修改邮箱                       |\n"
-              << "|                   (4) 修改密码                       |\n"
-              << "|                   (5) 注销账号                       |\n"
-              << "|                   (6) 返回上级                       |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << " ——————————————————————————————————————————————————————\n"
-              << Tail;
     {
       std::unique_lock<std::mutex> mtx(iolock);
-      std::cout << Yellow << "请输入您要进行的操作: " << Tail;
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 查看好友列表                   |\n"
+                << "|                   (2) 查看好友申请                   |\n"
+                << "|                   (3) 添加好友                       |\n"
+                << "|                   (4) 删除好友                       |\n"
+                << "|                   (5) 屏蔽好友                       |\n"
+                << "|                   (6) 选择好友                       |\n"
+                << "|                   (7) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作: ";
       std::cin >> flag;
+      std::cout << Tail;
     }
     switch (flag) {
       case 1:
         break;
       case 2:
-        UpdateNickname();
         break;
       case 3:
+        AddFriend();
         break;
       case 4:
         break;
       case 5:
         break;
       case 6:
+        break;
+      case 7:
         return;
-      default:
-        std::cout << "无效的操作" << std::endl;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << "无效的操作" << std::endl;
+        }
         std::cin.clear();  // 清除错误标志位
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         std::this_thread::sleep_for(std::chrono::seconds(1));
         break;
+      }
+    }
+  }
+}
+
+void about() {
+  while (true) {
+    int flag = 0;
+    system("clear");
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 查看个人信息                   |\n"
+                << "|                   (2) 修改昵称                       |\n"
+                << "|                   (3) 修改邮箱                       |\n"
+                << "|                   (4) 修改密码                       |\n"
+                << "|                   (5) 注销账号                       |\n"
+                << "|                   (6) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+
+      std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin >> flag;
+      std::cout << Tail;
+    }
+    switch (flag) {
+      case 1:
+        GetUserInfo();
+        break;
+      case 2:
+        UpdateNickname();
+        break;
+      case 3:
+        UpdateEmail();
+        break;
+      case 4:
+        UpdatePassword();
+        break;
+      case 5:
+        break;
+      case 6:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << Tail << std::endl;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        break;
+      }
     }
   }
 }
@@ -362,46 +815,51 @@ void Menu() {
   int flag = 0;
   while (true) {
     system("clear");
-    std::cout << Cyan;
-    std::cout << " ______________________________________________________\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                   (1) 好友                           |\n"
-              << "|                   (2) 群聊                           |\n"
-              << "|                   (3) 我                             |\n"
-              << "|                   (4) 退出                           |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << "|                                                      |\n"
-              << " ——————————————————————————————————————————————————————\n"
-              << Tail;
     {
       std::unique_lock<std::mutex> mtx(iolock);
-      std::cout << Yellow << "请输入您要进行的操作: " << Tail;
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 好友                           |\n"
+                << "|                   (2) 群聊                           |\n"
+                << "|                   (3) 我                             |\n"
+                << "|                   (4) 退出                           |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作: ";
       std::cin >> flag;
+      std::cout << Tail;
     }
     switch (flag) {
       case 1:
-
+        Friend();
         break;
       case 2:
-
         break;
       case 3:
         about();
         break;
       case 4:
+        ifrunning = false;
         return;
-      default:
-        std::cout << "无效的操作" << std::endl;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << Tail << std::endl;
+        }
         std::cin.clear();  // 清除错误标志位
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         std::this_thread::sleep_for(std::chrono::seconds(1));
         break;
+      }
     }
   }
 }
@@ -418,7 +876,7 @@ void UserLogin() {
     std::cin >> nickname;
     std::cout << Tail;
   }
-  std::cout << Yellow << "请你的输入密码(7~14位)：";
+  std::cout << Yellow << "请输入你的密码(7~14位)：";
   std::cin >> password;
   std::cout << Tail;
   while (!Check_password(password)) {
@@ -463,6 +921,7 @@ void UserLogin() {
     if (rsp.success()) {
       std::cout << Green << "登陆成功" << Tail << std::endl;
       uid = rsp.user_id();
+      uemail = rsp.email();
       std::cout << Yellow;
       for (int i = 0; i < rsp.friend_name_size(); ++i) {
         printf("[好友][%10s]:离线消息\n", rsp.friend_name(i).c_str());
@@ -471,6 +930,15 @@ void UserLogin() {
         printf("[群聊][%10s]:离线消息\n", rsp.group_name(i).c_str());
       }
       std::cout << Tail;
+      std::string start;
+      std::cout << Yellow << "输入chat以开始：";
+      std::cin >> start;
+      std::cout << Tail;
+      while (start != "chat") {
+        start.clear();
+        std::cout << Red << "请重新输入：" << Tail << Yellow;
+        std::cin >> start;
+      }
       std::thread recv(Recv);
       recv.detach();
       Menu();
@@ -574,6 +1042,7 @@ void EmailLogin() {
     if (rsp.success()) {
       std::cout << Green << "登陆成功" << Tail << std::endl;
       uid = rsp.user_id();
+      uemail = rsp.email();
       std::cout << Yellow;
       for (int i = 0; i < rsp.friend_name_size(); ++i) {
         printf("[好友][%10s]:离线消息\n", rsp.friend_name(i).c_str());
@@ -582,7 +1051,15 @@ void EmailLogin() {
         printf("[群聊][%10s]:离线消息\n", rsp.group_name(i).c_str());
       }
       std::cout << Tail;
-
+      std::string start;
+      std::cout << Yellow << "输入chat以开始：";
+      std::cin >> start;
+      std::cout << Tail;
+      while (start != "chat") {
+        start.clear();
+        std::cout << Red << "请重新输入：" << Tail << Yellow;
+        std::cin >> start;
+      }
       std::thread recv(Recv);
       recv.detach();
       Menu();
@@ -591,13 +1068,14 @@ void EmailLogin() {
     } else {
       if (rsp.errmsg() == "验证码错误") {
         vcode.clear();
-        std::cout << "验证码错误，请重新输入：";
+        std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
         std::cin >> vcode;
+        std::cout << Tail;
         regreq.mutable_email_login_req()->set_verify_code(vcode);
         SendToServer(regreq.SerializeAsString());
         continue;
       } else {
-        std::cout << rsp.errmsg() << "，失败退出\n" << Tail;
+        std::cout << Red << rsp.errmsg() << "，失败退出\n" << Tail;
         std::this_thread::sleep_for(std::chrono::seconds(1));
       }
     }
@@ -607,7 +1085,7 @@ void EmailLogin() {
 
 void Login() {
   int flag = 0;
-  do {
+  while (true) {
     system("clear");
     std::cout << Cyan;
     std::cout << " ______________________________________________________\n"
@@ -632,10 +1110,10 @@ void Login() {
     switch (flag) {
       case 1:
         UserLogin();
-        break;
+        return;
       case 2:
         EmailLogin();
-        break;
+        return;
       case 3:
         return;
       default:
@@ -645,12 +1123,12 @@ void Login() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         break;
     }
-  } while (flag < 1 || flag > 3);
+  }
 }
 
 void Start() {
   int flag = 0;
-  do {
+  while (ifrunning) {
     system("clear");
     std::cout << Cyan;
     std::cout << " ______________________________________________________\n"
@@ -688,7 +1166,6 @@ void Start() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         break;
     }
-  } while (true);
+  }
 }
-
 }  // namespace Xianwei
