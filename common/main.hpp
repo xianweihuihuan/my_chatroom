@@ -30,6 +30,11 @@ void SendVcode(const PtrConnection& conn, const EmailVerifyCodeReq& req);
 void UserRegister(const PtrConnection& conn, const UserRegisterReq& req);
 void UserLogin(const PtrConnection& conn, const UserLoginReq& req);
 void EmailLogin(const PtrConnection& conn, const EmailLoginReq& req);
+void SetNickname(const PtrConnection& conn, const SetUserNicknameReq& req);
+void GetUserInfo(const PtrConnection& conn, const GetUserInfoReq& req);
+void SetUserEmail(const PtrConnection& conn, const SetUserEmailReq& req);
+void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req);
+void EmailFriendAdd(const PtrConnection& conn, const EmailFriendAddReq& req);
 
 void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
   switch (msg.type()) {
@@ -51,6 +56,23 @@ void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
       break;
     case ServerMessageType::SetNicknameReqType:
       LOG_DEBUG("收到用户更改昵称请求");
+      SetNickname(conn, msg.set_user_nickname_req());
+      break;
+    case ServerMessageType::GetUserInfoReqType:
+      LOG_DEBUG("收到用户获取自身信息的请求");
+      GetUserInfo(conn, msg.get_user_info_req());
+      break;
+    case ServerMessageType::SetEmailReqType:
+      LOG_DEBUG("收到用户修改邮箱信息的请求");
+      SetUserEmail(conn, msg.set_user_email_req());
+      break;
+    case ServerMessageType::SetPassword:
+      LOG_DEBUG("收到用户修改密码信息的请求");
+      SetUserPassword(conn,msg.set_user_password_req());
+      break;
+    case ServerMessageType::EmailFriendAddReqType:
+      LOG_DEBUG("收到用户通过邮箱添加好友的请求");
+      EmailFriendAdd(conn, msg.email_friend_add_req());
       break;
   }
 }
@@ -209,8 +231,20 @@ void UserLogin(const PtrConnection& conn, const UserLoginReq& req) {
   }
   conn->GetOwner()->GetOfflineMessage()->Remove(user->UserId());
   rsp.mutable_user_login_rsp()->set_user_id(user->UserId());
+  rsp.mutable_user_login_rsp()->set_email(user->Email());
   rsp.mutable_user_login_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
+  std::string name = user->Nikename();
+  auto fid_list = conn->GetOwner()->GetRelationTable()->Friends(user->UserId());
+  ClientMessage Nrsp;
+  Nrsp.set_type(ClientMessageType::FriendLoginNoticeType);
+  Nrsp.mutable_friend_login_notice()->set_name(name);
+  for (auto fid : fid_list) {
+    auto fconn = connle.Connection(fid);
+    if (!fconn) {
+      SendToClient(fconn, Nrsp.SerializeAsString());
+    }
+  }
 }
 
 void EmailLogin(const PtrConnection& conn, const EmailLoginReq& req) {
@@ -267,6 +301,202 @@ void EmailLogin(const PtrConnection& conn, const EmailLoginReq& req) {
   conn->GetOwner()->GetOfflineMessage()->Remove(user->UserId());
   rsp.mutable_email_login_rsp()->set_user_id(user->UserId());
   rsp.mutable_email_login_rsp()->set_success(true);
+  rsp.mutable_email_login_rsp()->set_email(user->Email());
+  SendToClient(conn, rsp.SerializeAsString());
+  std::string name = user->Nikename();
+  auto fid_list = conn->GetOwner()->GetRelationTable()->Friends(user->UserId());
+  ClientMessage Nrsp;
+  Nrsp.set_type(ClientMessageType::FriendLoginNoticeType);
+  Nrsp.mutable_friend_login_notice()->set_name(name);
+  for (auto fid : fid_list) {
+    auto fconn = connle.Connection(fid);
+    if (!fconn) {
+      SendToClient(fconn, Nrsp.SerializeAsString());
+    }
+  }
+}
+
+void SetNickname(const PtrConnection& conn, const SetUserNicknameReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::SetNicknameRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_set_user_nickname_rsp()->set_errmsg(msg);
+    rsp.mutable_set_user_nickname_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string new_nickname = req.nickname();
+  if (new_nickname.empty()) {
+    errfunc("昵称不能为空");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto user =
+      conn->GetOwner()->GetUserTable()->Select_by_nickname(new_nickname);
+  if (user) {
+    LOG_ERROR("{}用户名已存在", new_nickname);
+    errfunc("该用户名已存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+  if (!user) {
+    LOG_ERROR("未找到用户信息-{}", uid);
+    errfunc("未找到用户信息");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  user->SetNickname(new_nickname);
+  if (!conn->GetOwner()->GetUserTable()->Update(user)) {
+    LOG_ERROR("Mysql：用户昵称更新失败");
+    errfunc("Mysql用户昵称更新失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_set_user_nickname_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
 }
+
+void GetUserInfo(const PtrConnection& conn, const GetUserInfoReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GetUserInfoRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_get_user_info_rsp()->set_errmsg(msg);
+    rsp.mutable_get_user_info_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+  if (!user) {
+    LOG_ERROR("未找到用户信息-{}", uid);
+    errfunc("未找到用户信息");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  UserInfo* user_info = rsp.mutable_get_user_info_rsp()->mutable_user_info();
+  user_info->set_user_id(user->UserId());
+  user_info->set_nickname(user->Nikename());
+  user_info->set_email(user->Email());
+  rsp.mutable_get_user_info_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void SetUserEmail(const PtrConnection& conn, const SetUserEmailReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::SetEmailRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_set_user_email_rsp()->set_errmsg(msg);
+    rsp.mutable_set_user_email_rsp()->set_success(false);
+    return;
+  };
+  std::string email = req.email();
+  std::string uid = req.user_id();
+  std::string uvid = req.email_verify_code_id();
+  std::string uvcode = req.email_verify_code();
+  auto vcode = conn->GetOwner()->GetCodes()->Code(uvid);
+  if (vcode != uvcode) {
+    LOG_ERROR("验证码错误");
+    errfunc("验证码错误");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto euser = conn->GetOwner()->GetUserTable()->Select_by_email(email);
+  if (euser) {
+    LOG_ERROR("邮箱{}已注册过账号", email);
+    errfunc("该邮箱已注册过账号");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+  if (!user) {
+    LOG_ERROR("未找到用户-{}的信息", uid);
+    errfunc("未找到用户的信息");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  user->SetEmail(email);
+  if (!conn->GetOwner()->GetUserTable()->Update(user)) {
+    LOG_ERROR("Mysql：用户邮箱更新失败");
+    errfunc("Mysql用户邮箱更新失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_set_user_email_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req){
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::SetPasswordRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_set_user_password_rsp()->set_errmsg(msg);
+    rsp.mutable_set_user_password_rsp()->set_success(false);
+    return;
+  };
+  std::string password = req.password();
+  std::string uid = req.user_id();
+  std::string uvid = req.email_verify_code_id();
+  std::string uvcode = req.email_verify_code();
+  auto vcode = conn->GetOwner()->GetCodes()->Code(uvid);
+  if (vcode != uvcode) {
+    LOG_ERROR("验证码错误");
+    errfunc("验证码错误");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+  if (!user) {
+    LOG_ERROR("未找到用户-{}的信息", uid);
+    errfunc("未找到用户的信息");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if(user->Password() == password){
+    LOG_ERROR("新密码不能和旧密码一致");
+    errfunc("新密码不能和旧密码一致");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  user->SetPassword(password);
+  if (!conn->GetOwner()->GetUserTable()->Update(user)) {
+    LOG_ERROR("Mysql：用户密码更新失败");
+    errfunc("Mysql用户密码更新失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_set_user_password_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void EmailFriendAdd(const PtrConnection& conn, const EmailFriendAddReq& req){
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::EmailFriendAddRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_email_friend_add_rsp()->set_errmsg(msg);
+    rsp.mutable_email_friend_add_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string email = req.email();
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_email(email);
+  if(!user){
+    LOG_ERROR("该用户不存在");
+    errfunc("该用户不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if(user->UserId() == uid){
+    LOG_ERROR("用户不能添加自己为好友");
+    errfunc("不能添加自己为好友");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto re = conn->GetOwner()->GetRelationTable()->Exists(uid, user->UserId());
+  if(re){
+    LOG_ERROR("两人已经是好友了");
+    errfunc("你们已经是好友了");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  re = conn->GetOwner()->GetFriendApplyTable()->Exists(uid, user->UserId());
+  if(re){
+    LOG_ERROR("已经发送过好友申请");
+    errfunc("已经发送过好友申请");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  FriendApply ap(uuid(), uid, user->UserId());
+  re = conn->GetOwner()->GetFriendApplyTable()->Insert(ap);
+  if(!re){
+    LOG_ERROR("Mysql新增好友申请事件失败");
+    errfunc("Mysql新增好友申请事件失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_email_friend_add_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
 }  // namespace Xianwei

@@ -22,14 +22,16 @@ class Conn {
     return it->second;
   }
 
-  std::string Uid(const PtrConnection& conn) { std::unique_lock mtx(lock_);
+  std::string Uid(const PtrConnection& conn) {
+    std::unique_lock<std::mutex> mtx(lock_);
     auto it = conn_uid_.find(conn);
-    if(it == conn_uid_.end()){
+    if (it == conn_uid_.end()) {
       LOG_DEBUG("未找到连接信息");
       return std::string();
     }
     return it->second;
   }
+
 
   void Remove(const PtrConnection& conn) {
     std::unique_lock<std::mutex> mtx(lock_);
