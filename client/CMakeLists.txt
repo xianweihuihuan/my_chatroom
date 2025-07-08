@@ -30,7 +30,7 @@ list(APPEND src_files ${CMAKE_CURRENT_SOURCE_DIR}/../muduo/Buffer.cc)
 list(APPEND src_files ${CMAKE_CURRENT_SOURCE_DIR}/../common/logger.cc)
 
 add_executable(${target} ${src_files} ${proto_srcs})
-target_link_libraries(${target}  -lgflags -lspdlog -lfmt -lgtest -lssl -lcrypto -lprotobuf -lleveldb  -lcpprest -lcurl  -lredis++ -lhiredis)
+target_link_libraries(${target}  -lgflags -lspdlog -lfmt -lgtest -lssl -lcrypto -lprotobuf -lleveldb  -lcpprest -lcurl  -lredis++ -lhiredis )
 
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
