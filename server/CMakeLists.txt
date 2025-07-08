@@ -52,7 +52,7 @@ aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../muduo src_file)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/source src_file)
 add_executable(${target} ${src_file} ${odb_srcs} ${proto_srcs})
 
-target_link_libraries(${target} -lgflags -lspdlog -lfmt -lssl -lcrypto -lprotobuf -lcpprest -lcurl -lcpr -lhiredis -lredis++ -lodb -lodb-mysql -lodb-boost)
+target_link_libraries(${target} -lgflags -lspdlog -lfmt -lssl -lcrypto -lprotobuf -lcpprest -lcurl -lcpr -lhiredis -lredis++ -lodb -lodb-mysql -lodb-boost /usr/lib/x86_64-linux-gnu/libjsoncpp.so.19)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../common)
