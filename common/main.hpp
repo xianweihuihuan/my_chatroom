@@ -1,4 +1,5 @@
 #pragma once
+#include <json/json.h>
 #include "TcpServer.h"
 #include "chat.pb.h"
 #include "conn.hpp"
@@ -35,6 +36,11 @@ void GetUserInfo(const PtrConnection& conn, const GetUserInfoReq& req);
 void SetUserEmail(const PtrConnection& conn, const SetUserEmailReq& req);
 void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req);
 void EmailFriendAdd(const PtrConnection& conn, const EmailFriendAddReq& req);
+void NicknameFriendAdd(const PtrConnection& conn,
+                       const NicknameFriendAddReq& req);
+void GetFriendApply(const PtrConnection& conn, const GetFriendApplyReq& req);
+void GetFriendList(const PtrConnection& conn, const GetFriendListReq& req);
+void SovelFriendApply(const PtrConnection& conn, const SovelFriendApplyReq& req);
 
 void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
   switch (msg.type()) {
@@ -68,11 +74,27 @@ void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
       break;
     case ServerMessageType::SetPassword:
       LOG_DEBUG("收到用户修改密码信息的请求");
-      SetUserPassword(conn,msg.set_user_password_req());
+      SetUserPassword(conn, msg.set_user_password_req());
       break;
     case ServerMessageType::EmailFriendAddReqType:
       LOG_DEBUG("收到用户通过邮箱添加好友的请求");
       EmailFriendAdd(conn, msg.email_friend_add_req());
+      break;
+    case ServerMessageType::NicknameFriendAddReqType:
+      LOG_DEBUG("收到用户通过昵称添加好友的请求");
+      NicknameFriendAdd(conn, msg.nickname_friend_add_req());
+      break;
+    case ServerMessageType::GetFriendApplyReqtype:
+      LOG_DEBUG("收到用户获取所有好友申请的请求");
+      GetFriendApply(conn,msg.get_friend_apply());
+      break;
+    case ServerMessageType::GetFriendListReqType:
+      LOG_DEBUG("收到用户获取好友列表的请求");
+      GetFriendList(conn, msg.get_friend_list_req());
+      break;
+    case ServerMessageType::SovelFriendApplyReqType:
+      LOG_DEBUG("收到用户处理好友申请的请求");
+      SovelFriendApply(conn, msg.sovel_friend_apply_req());
       break;
   }
 }
@@ -215,19 +237,52 @@ void UserLogin(const PtrConnection& conn, const UserLoginReq& req) {
   }
   conn->GetOwner()->GetStatus()->Append(user->UserId());
   connle.Insert(conn, user->UserId());
-  conn->GetOwner()->GetOfflineMessage()->SingleAppend("11111111111111",
-                                                      user->UserId());
-  conn->GetOwner()->GetOfflineMessage()->SingleAppend("11111111111111",
-                                                      user->UserId());
-  auto user_id =
+  Json::StreamWriterBuilder wbd;
+  Json::Value test;
+  test["name"] = "QUMO";
+  test["type"] = 1;
+  test["body"] = "11111111111111111";
+  std::string str = Json::writeString(wbd, test);
+  Json::Value test1;
+  test1["name"] = "QUMO";
+  test1["type"] = 1;
+  test1["body"] = "11111111111111111";
+  std::string str1 = Json::writeString(wbd, test1);
+  conn->GetOwner()->GetOfflineMessage()->SingleAppend(user->UserId(), str);
+  conn->GetOwner()->GetOfflineMessage()->SingleAppend(user->UserId(), str1);
+  Json::CharReaderBuilder bd;
+  std::unique_ptr<Json::CharReader> reader(bd.newCharReader());
+  auto user_body =
       conn->GetOwner()->GetOfflineMessage()->GetSingle(user->UserId());
-  for (auto& n : user_id) {
-    rsp.mutable_user_login_rsp()->add_friend_name(n);
+  for (auto& n : user_body) {
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_user_login_rsp()->add_friend_();
+      me->set_friend_name(body["name"].asString());
+      int ty = body["type"].asInt();
+      if (ty == 1) {
+        me->set_message_type(MessageType::string);
+      } else if (ty == 2) {
+        me->set_message_type(MessageType::file);
+      }
+      me->set_body(body["body"].asString());
+    }
   }
   auto group_id =
       conn->GetOwner()->GetOfflineMessage()->GetGroup(user->UserId());
   for (auto& n : group_id) {
-    rsp.mutable_user_login_rsp()->add_group_name(n);
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_user_login_rsp()->add_session();
+      me->set_session_name(body["name"].asString());
+      int ty = body["type"].asInt();
+      if (ty == 1) {
+        me->set_message_type(MessageType::string);
+      } else if (ty == 2) {
+        me->set_message_type(MessageType::file);
+      }
+      me->set_body(body["body"].asString());
+    }
   }
   conn->GetOwner()->GetOfflineMessage()->Remove(user->UserId());
   rsp.mutable_user_login_rsp()->set_user_id(user->UserId());
@@ -241,7 +296,7 @@ void UserLogin(const PtrConnection& conn, const UserLoginReq& req) {
   Nrsp.mutable_friend_login_notice()->set_name(name);
   for (auto fid : fid_list) {
     auto fconn = connle.Connection(fid);
-    if (!fconn) {
+    if (fconn) {
       SendToClient(fconn, Nrsp.SerializeAsString());
     }
   }
@@ -281,22 +336,48 @@ void EmailLogin(const PtrConnection& conn, const EmailLoginReq& req) {
     errfunc("该用户已在别处登陆");
     return SendToClient(conn, rsp.SerializeAsString());
   }
+  Json::CharReaderBuilder bd;
+  std::unique_ptr<Json::CharReader> reader(bd.newCharReader());
   conn->GetOwner()->GetStatus()->Append(user->UserId());
   connle.Insert(conn, user->UserId());
-  conn->GetOwner()->GetOfflineMessage()->SingleAppend("11111111111111",
-                                                      user->UserId());
-  conn->GetOwner()->GetOfflineMessage()->SingleAppend("11111111111111",
-                                                      user->UserId());
-  conn->GetOwner()->GetOfflineMessage()->GroupAppend("321321", user->UserId());
+  Json::StreamWriterBuilder wbd;
+  Json::Value test;
+  test["name"] = "QUMO";
+  test["type"] = 1;
+  test["body"] = "11111111111111111";
+  std::string str = Json::writeString(wbd, test);
+  conn->GetOwner()->GetOfflineMessage()->SingleAppend(user->UserId(), str);
   auto user_id =
       conn->GetOwner()->GetOfflineMessage()->GetSingle(user->UserId());
   for (auto& n : user_id) {
-    rsp.mutable_email_login_rsp()->add_friend_name(n);
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_email_login_rsp()->add_friend_();
+      me->set_friend_name(body["name"].asString());
+      int ty = body["type"].asInt();
+      if (ty == 1) {
+        me->set_message_type(MessageType::string);
+      } else if (ty == 2) {
+        me->set_message_type(MessageType::file);
+      }
+      me->set_body(body["body"].asString());
+    }
   }
   auto group_id =
       conn->GetOwner()->GetOfflineMessage()->GetGroup(user->UserId());
   for (auto& n : group_id) {
-    rsp.mutable_email_login_rsp()->add_group_name(n);
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_email_login_rsp()->add_session();
+      me->set_session_name(body["name"].asString());
+      int ty = body["type"].asInt();
+      if (ty == 1) {
+        me->set_message_type(MessageType::string);
+      } else if (ty == 2) {
+        me->set_message_type(MessageType::file);
+      }
+      me->set_body(body["body"].asString());
+    }
   }
   conn->GetOwner()->GetOfflineMessage()->Remove(user->UserId());
   rsp.mutable_email_login_rsp()->set_user_id(user->UserId());
@@ -416,7 +497,7 @@ void SetUserEmail(const PtrConnection& conn, const SetUserEmailReq& req) {
   SendToClient(conn, rsp.SerializeAsString());
 }
 
-void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req){
+void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req) {
   ClientMessage rsp;
   rsp.set_type(ClientMessageType::SetPasswordRspType);
   auto errfunc = [&rsp](const std::string& msg) {
@@ -440,7 +521,7 @@ void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req){
     errfunc("未找到用户的信息");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(user->Password() == password){
+  if (user->Password() == password) {
     LOG_ERROR("新密码不能和旧密码一致");
     errfunc("新密码不能和旧密码一致");
     return SendToClient(conn, rsp.SerializeAsString());
@@ -455,7 +536,7 @@ void SetUserPassword(const PtrConnection& conn, const SetUserPasswordReq& req){
   SendToClient(conn, rsp.SerializeAsString());
 }
 
-void EmailFriendAdd(const PtrConnection& conn, const EmailFriendAddReq& req){
+void EmailFriendAdd(const PtrConnection& conn, const EmailFriendAddReq& req) {
   ClientMessage rsp;
   rsp.set_type(ClientMessageType::EmailFriendAddRspType);
   auto errfunc = [&rsp](const std::string& msg) {
@@ -466,36 +547,168 @@ void EmailFriendAdd(const PtrConnection& conn, const EmailFriendAddReq& req){
   std::string uid = req.user_id();
   std::string email = req.email();
   auto user = conn->GetOwner()->GetUserTable()->Select_by_email(email);
-  if(!user){
+  if (!user) {
     LOG_ERROR("该用户不存在");
     errfunc("该用户不存在");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(user->UserId() == uid){
+  if (user->UserId() == uid) {
     LOG_ERROR("用户不能添加自己为好友");
     errfunc("不能添加自己为好友");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   auto re = conn->GetOwner()->GetRelationTable()->Exists(uid, user->UserId());
-  if(re){
+  if (re) {
     LOG_ERROR("两人已经是好友了");
     errfunc("你们已经是好友了");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   re = conn->GetOwner()->GetFriendApplyTable()->Exists(uid, user->UserId());
-  if(re){
+  if (re) {
     LOG_ERROR("已经发送过好友申请");
     errfunc("已经发送过好友申请");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   FriendApply ap(uuid(), uid, user->UserId());
   re = conn->GetOwner()->GetFriendApplyTable()->Insert(ap);
-  if(!re){
+  if (!re) {
     LOG_ERROR("Mysql新增好友申请事件失败");
     errfunc("Mysql新增好友申请事件失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   rsp.mutable_email_friend_add_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void NicknameFriendAdd(const PtrConnection& conn,
+                       const NicknameFriendAddReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::NicknameFriendAddRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_nickname_friend_add_rsp()->set_errmsg(msg);
+    rsp.mutable_nickname_friend_add_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string nickname = req.nickname();
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_nickname(nickname);
+  if (!user) {
+    LOG_ERROR("该用户不存在");
+    errfunc("该用户不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (user->UserId() == uid) {
+    LOG_ERROR("用户不能添加自己为好友");
+    errfunc("不能添加自己为好友");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto re = conn->GetOwner()->GetRelationTable()->Exists(uid, user->UserId());
+  if (re) {
+    LOG_ERROR("两人已经是好友了");
+    errfunc("你们已经是好友了");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  re = conn->GetOwner()->GetFriendApplyTable()->Exists(uid, user->UserId());
+  if (re) {
+    LOG_ERROR("已经发送过好友申请");
+    errfunc("已经发送过好友申请");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  FriendApply ap(uuid(), uid, user->UserId());
+  re = conn->GetOwner()->GetFriendApplyTable()->Insert(ap);
+  if (!re) {
+    LOG_ERROR("Mysql新增好友申请事件失败");
+    errfunc("Mysql新增好友申请事件失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_nickname_friend_add_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void GetFriendApply(const PtrConnection& conn, const GetFriendApplyReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GetFriendApplyRsptype);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_get_friend_apply_rsp()->set_errmsg(msg);
+    rsp.mutable_get_friend_apply_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  auto aid_list = conn->GetOwner()->GetFriendApplyTable()->ApplyUsers(uid);
+  if (aid_list.empty()) {
+    LOG_ERROR("无好友申请或获取好友申请失败");
+    errfunc("无好友申请或获取好友申请失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  for (const auto& x : aid_list) {
+    auto auser = conn->GetOwner()->GetUserTable()->Select_by_uid(x);
+    if (auser) {
+      auto info = rsp.mutable_get_friend_apply_rsp()->add_user_info();
+      info->set_email(auser->Email());
+      info->set_nickname(auser->Nikename());
+      info->set_user_id(auser->UserId());
+    }
+  }
+  rsp.mutable_get_friend_apply_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializePartialAsString());
+}
+
+void GetFriendList(const PtrConnection& conn, const GetFriendListReq& req){
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GetFriendListRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_get_friend_list_rsp()->set_errmsg(msg);
+    rsp.mutable_get_friend_list_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  auto friend_list = conn->GetOwner()->GetRelationTable()->Friends(uid);
+  if(friend_list.empty()){
+    LOG_ERROR("无好友或获取好友列表失败");
+    errfunc("无好友或获取好友列表失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  for(const auto& n : friend_list){
+    auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(n);
+    if(user){
+      auto info = rsp.mutable_get_friend_list_rsp()->add_friend_list();
+      info->set_user_id(user->UserId());
+      info->set_nickname(user->Nikename());
+      info->set_email(user->Email());
+    }
+  }
+  rsp.mutable_get_friend_list_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void SovelFriendApply(const PtrConnection& conn, const SovelFriendApplyReq& req){
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::SovelFriendApplyRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_sovel_friend_apply_rsp()->set_errmsg(msg);
+    rsp.mutable_sovel_friend_apply_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string pid = req.peer_id();
+  if(!conn->GetOwner()->GetFriendApplyTable()->Exists(pid, uid)){
+    LOG_ERROR("不存在好友申请信息{}-{}",pid,uid);
+    errfunc("不存在好友申请信息");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if(!conn->GetOwner()->GetFriendApplyTable()->Remove(pid,uid)){
+    LOG_ERROR("Mysql好友申请事件删除失败");
+    errfunc("Mysql好友申请事件删除失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if(req.agree()){
+    if(!conn->GetOwner()->GetRelationTable()->Insert(uid,pid)){
+      LOG_ERROR("Mysql添加好友关系失败");
+      errfunc("Mysql添加好友关系失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+  }
+  rsp.mutable_sovel_friend_apply_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
 }
 
