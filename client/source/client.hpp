@@ -22,9 +22,10 @@ Xianwei::Buffer buffer;
 SSL_CTX* ctx;
 bool ifrunning = true;
 int vcodefd;
-bool vsuccess;
 int selfefd;
 int friendefd;
+bool vsuccess;
+bool friendsuccess;
 bool selfsuccess;
 SSL* ssl;
 std::string vid;
@@ -33,6 +34,8 @@ std::string uid;
 std::string uemail;
 std::mutex iolock;
 std::atomic<bool> running{true};
+std::vector<Xianwei::UserInfo> friend_apply;
+std::vector<Xianwei::UserInfo> friend_list;
 
 namespace Xianwei {
 bool Check_nickname(const std::string& nickname) {
@@ -95,30 +98,35 @@ void UserRegister() {
   std::string password;
   std::string email;
   std::cout << Yellow << "请输入你的昵称：";
+  std::cin.clear();
   std::cin >> nickname;
   std::cout << Tail;
   while (!Check_nickname(nickname)) {
     nickname.clear();
     std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
     std::cin >> nickname;
     std::cout << Tail;
   }
-
   std::cout << Yellow << "请输入密码(7~14位)：";
+  std::cin.clear();
   std::cin >> password;
   std::cout << Tail;
   while (!Check_password(password)) {
     password.clear();
     std::cout << Red << "密码不在要求范围内，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
     std::cin >> password;
     std::cout << Tail;
   }
   std::cout << Yellow << "请输入邮箱：";
+  std::cin.clear();
   std::cin >> email;
   std::cout << Tail;
   while (!Check_email(email)) {
     email.clear();
     std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
     std::cin >> email;
     std::cout << Tail;
   }
@@ -173,6 +181,7 @@ void UserRegister() {
     break;
   }
   std::cout << Yellow << "请输入验证码：";
+  std::cin.clear();
   std::cin >> vcode;
   std::cout << Tail;
   Xianwei::ServerMessage regreq;
@@ -220,6 +229,7 @@ void UserRegister() {
       if (rsp.errmsg() == "验证码错误") {
         vcode.clear();
         std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin.clear();
         std::cin >> vcode;
         std::cout << Tail;
         regreq.mutable_user_register_req()->set_verify_code(vcode);
@@ -378,6 +388,78 @@ void HandleMessage(const ClientMessage& msg) {
       }
       WakeUpEventFd(friendefd);
       break;
+    case ClientMessageType::NicknameFriendAddRspType:
+      if (msg.nickname_friend_add_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "发送好友申请成功" << Tail << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "发送好友申请失败，原因："
+                    << msg.nickname_friend_add_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+      WakeUpEventFd(friendefd);
+      break;
+    case ClientMessageType::GetFriendApplyRsptype:
+      if (msg.get_friend_apply_rsp().success()) {
+        friend_apply.clear();
+        for (int i = 0; i < msg.get_friend_apply_rsp().user_info_size(); ++i) {
+          friend_apply.emplace_back(msg.get_friend_apply_rsp().user_info(i));
+        }
+        friendsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << msg.get_friend_apply_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+        friendsuccess = false;
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+      WakeUpEventFd(friendefd);
+      break;
+    case ClientMessageType::GetFriendListRspType:
+      if (msg.get_friend_list_rsp().success()) {
+        friend_list.clear();
+        for (int i = 0; i < msg.get_friend_list_rsp().friend_list_size(); ++i) {
+          friend_list.emplace_back(msg.get_friend_list_rsp().friend_list(i));
+        }
+        friendsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << msg.get_friend_list_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+        friendsuccess = false;
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+      WakeUpEventFd(friendefd);
+      break;
+    case ClientMessageType::SovelFriendApplyRspType:
+      if (msg.sovel_friend_apply_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "处理好友申请事件成功" << Tail << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "处理好友申请事件失败，原因："
+                    << msg.sovel_friend_apply_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+      WakeUpEventFd(friendefd);
+      break;
   }
 }
 
@@ -421,6 +503,7 @@ void UpdateNickname() {
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow << "请输入你的新昵称：";
+    std::cin.clear();
     std::cin >> nickname;
     std::cout << Tail;
   }
@@ -429,6 +512,7 @@ void UpdateNickname() {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
       std::cin >> nickname;
       std::cout << Tail;
     }
@@ -455,6 +539,7 @@ void UpdateEmail() {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow;
     std::cout << "请输入你的新邮箱：";
+    std::cin.clear();
     std::cin >> newemail;
     std::cout << Tail;
   }
@@ -463,6 +548,7 @@ void UpdateEmail() {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
       std::cin >> newemail;
       std::cout << Tail;
     }
@@ -472,6 +558,7 @@ void UpdateEmail() {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow;
     std::cout << "现在开始获取验证码(y/n)：";
+    std::cin.clear();
     std::cin >> ensure;
     std::cout << Tail;
   }
@@ -486,6 +573,7 @@ void UpdateEmail() {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "未知操作，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
       std::cin >> ensure;
       std::cout << Tail;
     }
@@ -501,6 +589,7 @@ void UpdateEmail() {
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow << "请输入验证码：";
+    std::cin.clear();
     std::cin >> vcode;
     std::cout << Tail;
   }
@@ -518,6 +607,7 @@ void UpdateEmail() {
       {
         std::unique_lock<std::mutex> mtx(iolock);
         std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin.clear();
         std::cin >> vcode;
         std::cout << Tail;
       }
@@ -538,6 +628,7 @@ void UpdatePassword() {
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow << "请输入你的新密码(7~14位)：";
+    std::cin.clear();
     std::cin >> password;
     std::cout << Tail;
   }
@@ -546,6 +637,7 @@ void UpdatePassword() {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "密码不在要求范围内，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
       std::cin >> password;
       std::cout << Tail;
     }
@@ -555,6 +647,7 @@ void UpdatePassword() {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow;
     std::cout << "现在开始获取验证码(y/n)：";
+    std::cin.clear();
     std::cin >> ensure;
     std::cout << Tail;
   }
@@ -569,6 +662,7 @@ void UpdatePassword() {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "未知操作，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
       std::cin >> ensure;
       std::cout << Tail;
     }
@@ -584,6 +678,7 @@ void UpdatePassword() {
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow << "请输入验证码：";
+    std::cin.clear();
     std::cin >> vcode;
     std::cout << Tail;
   }
@@ -601,6 +696,7 @@ void UpdatePassword() {
       {
         std::unique_lock<std::mutex> mtx(iolock);
         std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin.clear();
         std::cin >> vcode;
         std::cout << Tail;
       }
@@ -621,6 +717,7 @@ void EmailAddFriend() {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow;
     std::cout << "请输入对方的邮箱：";
+    std::cin.clear();
     std::cin >> email;
     std::cout << Tail;
   }
@@ -629,6 +726,7 @@ void EmailAddFriend() {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
       std::cin >> email;
       std::cout << Tail;
     }
@@ -638,6 +736,33 @@ void EmailAddFriend() {
   req.mutable_email_friend_add_req()->set_email(email);
   req.mutable_email_friend_add_req()->set_user_id(uid);
   SendToServer(req.SerializeAsString());
+  ReadEventfd(friendefd);
+}
+
+void NicknameAddFriend() {
+  std::string nickname;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入对方的昵称：";
+    std::cin.clear();
+    std::cin >> nickname;
+    std::cout << Tail;
+  }
+  while (!Check_nickname(nickname)) {
+    nickname.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
+      std::cin >> nickname;
+      std::cout << Tail;
+    }
+  }
+  ServerMessage rsp;
+  rsp.set_type(ServerMessageType::NicknameFriendAddReqType);
+  rsp.mutable_nickname_friend_add_req()->set_nickname(nickname);
+  rsp.mutable_nickname_friend_add_req()->set_user_id(uid);
+  SendToServer(rsp.SerializeAsString());
   ReadEventfd(friendefd);
 }
 
@@ -665,6 +790,7 @@ void AddFriend() {
                 << " ——————————————————————————————————————————————————————\n"
                 << Tail;
       std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin.clear();
       std::cin >> flag;
       std::cout << Tail;
     }
@@ -673,8 +799,183 @@ void AddFriend() {
         EmailAddFriend();
         return;
       case 2:
+        NicknameAddFriend();
+
         return;
       case 3:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << Tail << std::endl;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        break;
+      }
+    }
+  }
+}
+
+void SovelApply() {
+  int flag = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要处理的好友申请编号：" << Tail;
+    std::cin.clear();
+    std::cout << Yellow;
+    std::cin >> flag;
+    std::cout << Tail;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    while (flag < 1 || flag > friend_apply.size()) {
+      std::cout << Red << "不存在编号为此的好友申请，请重新输入：" << Tail
+                << Yellow;
+      std::cin.clear();
+      std::cin >> flag;
+    }
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::SovelFriendApplyReqType);
+  std::string agree;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "是否同意该条好友申请(y/n)：" << Tail << Yellow;
+    std::cin.clear();
+    std::cin >> agree;
+    std::cout << Tail;
+  }
+  while (true) {
+    if (agree == "n" || agree == "no") {
+      req.mutable_sovel_friend_apply_req()->set_agree(false);
+      break;
+    }
+    if (agree == "y" || agree == "yes") {
+      req.mutable_sovel_friend_apply_req()->set_agree(true);
+      break;
+    }
+    agree.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "未知操作，请重新输入：" << Tail << Yellow;
+      std::cin.clear();
+      std::cin >> agree;
+      std::cout << Tail;
+    }
+  }
+  req.mutable_sovel_friend_apply_req()->set_user_id(uid);
+  req.mutable_sovel_friend_apply_req()->set_peer_id(
+      friend_apply[flag - 1].user_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(friendefd);
+}
+
+void GetFriendApply() {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GetFriendApplyReqtype);
+  req.mutable_get_friend_apply()->set_user_id(uid);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(friendefd);
+  if (!friendsuccess) {
+    return;
+  }
+  int flag = 0;
+  while (true) {
+    system("clear");
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow;
+      for (int i = 0; i < friend_apply.size(); ++i) {
+        std::cout << "(" << i + 1 << ") " << friend_apply[i].nickname()
+                  << " —————— " << friend_apply[i].email() << std::endl;
+      }
+      std::cout << Tail;
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 处理好友申请                   |\n"
+                << "|                   (2) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin.clear();
+      std::cin >> flag;
+      std::cout << Tail;
+    }
+    switch (flag) {
+      case 1:
+        SovelApply();
+        return;
+      case 2:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << Tail << std::endl;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        break;
+      }
+    }
+  }
+}
+
+void GetFriendList() {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GetFriendListReqType);
+  req.mutable_get_friend_list_req()->set_user_id(uid);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(friendefd);
+  int flag = 0;
+  while (true) {
+    system("clear");
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow;
+      for (int i = 0; i < friend_list.size(); ++i) {
+        std::cout << "(" << i + 1 << ") " << friend_list[i].nickname()
+                  << " —————— " << friend_list[i].email() << std::endl;
+      }
+      std::cout << Tail;
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 处理好友申请                   |\n"
+                << "|                   (2) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin.clear();
+      std::cin >> flag;
+      std::cout << Tail;
+    }
+    switch (flag) {
+      case 1:
+        
+        
+      case 2:
         return;
       default: {
         {
@@ -717,13 +1018,16 @@ void Friend() {
                 << " ——————————————————————————————————————————————————————\n"
                 << Tail;
       std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin.clear();
       std::cin >> flag;
       std::cout << Tail;
     }
     switch (flag) {
       case 1:
+        GetFriendList();
         break;
       case 2:
+        GetFriendApply();
         break;
       case 3:
         AddFriend();
@@ -775,8 +1079,8 @@ void about() {
                 << "|                                                      |\n"
                 << " ——————————————————————————————————————————————————————\n"
                 << Tail;
-
       std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin.clear();
       std::cin >> flag;
       std::cout << Tail;
     }
@@ -835,6 +1139,7 @@ void Menu() {
                 << " ——————————————————————————————————————————————————————\n"
                 << Tail;
       std::cout << Yellow << "请输入您要进行的操作: ";
+      std::cin.clear();
       std::cin >> flag;
       std::cout << Tail;
     }
@@ -868,20 +1173,24 @@ void UserLogin() {
   std::string nickname;
   std::string password;
   std::cout << Yellow << "请输入你的昵称：";
+  std::cin.clear();
   std::cin >> nickname;
   std::cout << Tail;
   while (!Check_nickname(nickname)) {
     nickname.clear();
     std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
     std::cin >> nickname;
     std::cout << Tail;
   }
   std::cout << Yellow << "请输入你的密码(7~14位)：";
+  std::cin.clear();
   std::cin >> password;
   std::cout << Tail;
   while (!Check_password(password)) {
     password.clear();
     std::cout << Red << "密码不在要求范围内，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
     std::cin >> password;
     std::cout << Tail;
   }
@@ -923,20 +1232,32 @@ void UserLogin() {
       uid = rsp.user_id();
       uemail = rsp.email();
       std::cout << Yellow;
-      for (int i = 0; i < rsp.friend_name_size(); ++i) {
-        printf("[好友][%10s]:离线消息\n", rsp.friend_name(i).c_str());
+      for (int i = 0; i < rsp.friend__size(); ++i) {
+        printf("[好友][%s]", rsp.friend_(i).friend_name().c_str());
+        if (rsp.friend_(i).message_type() == MessageType::file) {
+          printf("[文件]:%s\n", rsp.friend_(i).body().c_str());
+        } else if (rsp.friend_(i).message_type() == MessageType::string) {
+          printf("[消息]:%s\n", rsp.friend_(i).body().c_str());
+        }
       }
-      for (int i = 0; i < rsp.group_name_size(); ++i) {
-        printf("[群聊][%10s]:离线消息\n", rsp.group_name(i).c_str());
+      for (int i = 0; i < rsp.session_size(); ++i) {
+        printf("[群聊][%s]", rsp.session(i).session_name().c_str());
+        if (rsp.session(i).message_type() == MessageType::file) {
+          printf("[文件]:%s\n", rsp.session(i).body().c_str());
+        } else if (rsp.session(i).message_type() == MessageType::string) {
+          printf("[消息]:%s\n", rsp.session(i).body().c_str());
+        }
       }
       std::cout << Tail;
       std::string start;
       std::cout << Yellow << "输入chat以开始：";
+      std::cin.clear();
       std::cin >> start;
       std::cout << Tail;
       while (start != "chat") {
         start.clear();
         std::cout << Red << "请重新输入：" << Tail << Yellow;
+        std::cin.clear();
         std::cin >> start;
       }
       std::thread recv(Recv);
@@ -955,11 +1276,13 @@ void EmailLogin() {
   std::string email;
   std::cout << Yellow;
   std::cout << "请输入邮箱：";
+  std::cin.clear();
   std::cin >> email;
   std::cout << Tail;
   while (!Check_email(email)) {
     email.clear();
     std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
     std::cin >> email;
     std::cout << Tail;
   }
@@ -1003,6 +1326,7 @@ void EmailLogin() {
     break;
   }
   std::cout << Yellow << "请输入验证码：";
+  std::cin.clear();
   std::cin >> vcode;
   std::cout << Tail;
   Xianwei::ServerMessage regreq;
@@ -1044,20 +1368,32 @@ void EmailLogin() {
       uid = rsp.user_id();
       uemail = rsp.email();
       std::cout << Yellow;
-      for (int i = 0; i < rsp.friend_name_size(); ++i) {
-        printf("[好友][%10s]:离线消息\n", rsp.friend_name(i).c_str());
+      for (int i = 0; i < rsp.friend__size(); ++i) {
+        printf("[好友][%10s]", rsp.friend_(i).friend_name().c_str());
+        if (rsp.friend_(i).message_type() == MessageType::string) {
+          printf("[文件]:%s\n", rsp.friend_(i).body().c_str());
+        } else if (rsp.friend_(i).message_type() == MessageType::file) {
+          printf("[消息]:%s\n", rsp.friend_(i).body().c_str());
+        }
       }
-      for (int i = 0; i < rsp.group_name_size(); ++i) {
-        printf("[群聊][%10s]:离线消息\n", rsp.group_name(i).c_str());
+      for (int i = 0; i < rsp.session_size(); ++i) {
+        printf("[群聊][%10s]", rsp.session(i).session_name().c_str());
+        if (rsp.session(i).message_type() == MessageType::file) {
+          printf("[文件]:%s\n", rsp.session(i).body().c_str());
+        } else if (rsp.session(i).message_type() == MessageType::string) {
+          printf("[消息]:%s\n", rsp.session(i).body().c_str());
+        }
       }
       std::cout << Tail;
       std::string start;
       std::cout << Yellow << "输入chat以开始：";
+      std::cin.clear();
       std::cin >> start;
       std::cout << Tail;
       while (start != "chat") {
         start.clear();
         std::cout << Red << "请重新输入：" << Tail << Yellow;
+        std::cin.clear();
         std::cin >> start;
       }
       std::thread recv(Recv);
@@ -1069,6 +1405,7 @@ void EmailLogin() {
       if (rsp.errmsg() == "验证码错误") {
         vcode.clear();
         std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin.clear();
         std::cin >> vcode;
         std::cout << Tail;
         regreq.mutable_email_login_req()->set_verify_code(vcode);
@@ -1105,6 +1442,7 @@ void Login() {
               << " ——————————————————————————————————————————————————————\n"
               << Tail;
     std::cout << Yellow << "请输入您要进行的操作: ";
+    std::cin.clear();
     std::cin >> flag;
     std::cout << Tail;
     switch (flag) {
@@ -1148,6 +1486,7 @@ void Start() {
               << " ——————————————————————————————————————————————————————\n"
               << Tail;
     std::cout << Yellow << "请输入您要进行的操作: ";
+    std::cin.clear();
     std::cin >> flag;
     std::cout << Tail;
     switch (flag) {

@@ -47,11 +47,13 @@ int main(int argc,char*argv[]) {
   Xianwei::Print();
   std::cout << Yellow << "输入”start“以开始：";
   std::string ifstart;
+  std::cin.clear();
   std::cin >> ifstart;
   std::cout << Tail;
   while (ifstart != "start") {
     std::cout <<Red<<"未知操作，请重新输入：" <<Yellow;
     ifstart.clear();
+    std::cin.clear();
     std::cin >> ifstart;
     std::cout << Tail;
   }
