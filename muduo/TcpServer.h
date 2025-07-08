@@ -21,7 +21,9 @@ class TcpServer {
   using AnyEventCallback = std::function<void(const PtrConnection&)>;
   using Functor = std::function<void()>;
 
-  explicit TcpServer(int port,const std::string& scrt,const std::string& skey);
+  //explicit TcpServer(int port,const std::string& scrt,const std::string& skey);
+
+  explicit TcpServer(int port,bool enable_ssl,const std::string& scrt,const std::string& skey);
 
   // 设置线程池线程数量
   void SetThreadCount(int count);
@@ -107,6 +109,7 @@ class TcpServer {
   std::string ver_user_;
   std::string ver_key_;
 
+  bool enable_ssl_;
   // const std::string& host,
   //                                                 int port,
   //                                                 int db,

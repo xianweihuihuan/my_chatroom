@@ -3,10 +3,34 @@
 
 namespace Xianwei {
 
+// Connection::Connection(EventLoop* loop,
+//                        uint64_t conn_id,
+//                        int sockfd,
+//                        SSL_CTX* ctx)
+//     : conn_id_(conn_id),
+//       sockfd_(sockfd),
+//       enable_inactive_release_(false),
+//       loop_(loop),
+//       status_(CONNECTING),
+//       socket_(sockfd),
+//       channel_(loop, sockfd),
+//       ssl_ctx_(ctx) {
+//   socket_.NonBlock();
+//   ssl_ = SSL_new(ssl_ctx_);
+//   SSL_set_fd(ssl_, sockfd_);
+//   SSL_set_accept_state(ssl_);
+//   channel_.SetCloseCallback([this]() { HandleClose(); });
+//   channel_.SetEventCallback([this]() { HandleEvent(); });
+//   channel_.SetReadCallback([this]() { HandleRead(); });
+//   channel_.SetWriteCallback([this]() { HandleWrite(); });
+//   channel_.SetErrorCallback([this]() { HandleError(); });
+// }
+
 Connection::Connection(EventLoop* loop,
                        uint64_t conn_id,
                        int sockfd,
-                       SSL_CTX* ctx)
+                       SSL_CTX* ctx,
+                       bool enable_ssl)
     : conn_id_(conn_id),
       sockfd_(sockfd),
       enable_inactive_release_(false),
@@ -14,11 +38,15 @@ Connection::Connection(EventLoop* loop,
       status_(CONNECTING),
       socket_(sockfd),
       channel_(loop, sockfd),
-      ssl_ctx_(ctx) {
+      ssl_ctx_(ctx),
+      ssl_(nullptr),
+      enable_ssl_(enable_ssl) {
   socket_.NonBlock();
-  ssl_ = SSL_new(ssl_ctx_);
-  SSL_set_fd(ssl_, sockfd_);
-  SSL_set_accept_state(ssl_);
+  if (enable_ssl_) {
+    ssl_ = SSL_new(ssl_ctx_);
+    SSL_set_fd(ssl_, sockfd_);
+    SSL_set_accept_state(ssl_);
+  }
   channel_.SetCloseCallback([this]() { HandleClose(); });
   channel_.SetEventCallback([this]() { HandleEvent(); });
   channel_.SetReadCallback([this]() { HandleRead(); });
@@ -69,7 +97,15 @@ void Connection::EstablishedInLoop() {
   assert(status_ == CONNECTING);
   // 不立刻标记 CONNECTED，也不回调 connected_cb_
   // 而是开启异步 TLS 握手流程
-  DoHandshake();
+  if (enable_ssl_) {
+    DoHandshake();
+  } else {
+    status_ = CONNECTED;
+    channel_.EnableRead();
+    if (connected_cb_) {
+      connected_cb_(shared_from_this());
+    }
+  }
 }
 
 void Connection::HandleRead() {
@@ -80,27 +116,41 @@ void Connection::HandleRead() {
   // input_buffer_.WriteAndPush(buf, ret);
   // if (input_buffer_.ReadAbleSize() > 0 && message_cb_)
   //   message_cb_(shared_from_this(), &input_buffer_);
-  if (status_ == CONNECTING) {
+  if (status_ == CONNECTING && enable_ssl_) {
     DoHandshake();
     return;
   }
   char buf[65536];
-  ssize_t ret = SSL_read(ssl_, buf, sizeof(buf));
-  if (ret > 0) {
-    input_buffer_.WriteAndPush(buf, ret);
-    if (input_buffer_.ReadAbleSize() > 0 && message_cb_)
-      message_cb_(shared_from_this(), &input_buffer_);
-    return;
-  }
-  int err = SSL_get_error(ssl_, ret);
-  if (err == SSL_ERROR_WANT_READ) {
-    channel_.EnableRead();
-  } else if (err == SSL_ERROR_WANT_WRITE) {
-    channel_.EnableWrite();
-  } else if (err == SSL_ERROR_ZERO_RETURN) {
-    ShutdownInLoop();
+  if (enable_ssl_) {
+    ssize_t ret = SSL_read(ssl_, buf, sizeof(buf));
+    if (ret > 0) {
+      input_buffer_.WriteAndPush(buf, ret);
+      if (input_buffer_.ReadAbleSize() > 0 && message_cb_)
+        message_cb_(shared_from_this(), &input_buffer_);
+      return;
+    }
+    int err = SSL_get_error(ssl_, ret);
+    if (err == SSL_ERROR_WANT_READ) {
+      channel_.EnableRead();
+    } else if (err == SSL_ERROR_WANT_WRITE) {
+      channel_.EnableWrite();
+    } else if (err == SSL_ERROR_ZERO_RETURN) {
+      ShutdownInLoop();
+    } else {
+      ShutdownInLoop();
+    }
   } else {
-    ShutdownInLoop();
+    ssize_t ret = socket_.NonBlockRecv(buf, sizeof(buf));
+    if (ret > 0) {
+      input_buffer_.WriteAndPush(buf, ret);
+      if (input_buffer_.ReadAbleSize() > 0 && message_cb_) {
+        message_cb_(shared_from_this(), &input_buffer_);
+      }
+      return;
+    }
+    if (ret < 0) {
+      ShutdownInLoop();
+    }
   }
 }
 
@@ -115,7 +165,7 @@ void Connection::HandleWrite() {
   //   if (status_ == DISCONNECTING)
   //     Release();
   // }
-  if (status_ == CONNECTING) {
+  if (status_ == CONNECTING && enable_ssl_) {
     DoHandshake();
     return;
   }
@@ -123,19 +173,38 @@ void Connection::HandleWrite() {
   // 握手完成后，正常 SSL_write，处理 partial write
   size_t total = output_buffer_.ReadAbleSize();
   size_t sent = 0;
-  while (sent < total) {
-    int n = SSL_write(ssl_, output_buffer_.ReadPosition() + sent, total - sent);
-    if (n > 0) {
-      sent += n;
-      continue;
-    }
-
-    int err = SSL_get_error(ssl_, n);
-    if (err == SSL_ERROR_WANT_WRITE) {
-      channel_.EnableWrite();
+  if (enable_ssl_) {
+    while (sent < total) {
+      int n =
+          SSL_write(ssl_, output_buffer_.ReadPosition() + sent, total - sent);
+      if (n > 0) {
+        sent += n;
+        continue;
+      }
+      int err = SSL_get_error(ssl_, n);
+      if (err == SSL_ERROR_WANT_WRITE) {
+        channel_.EnableWrite();
+        return;
+      }
+      // 其他情况均视为错误，关闭连接
+      Release();
       return;
     }
-    // 其他情况均视为错误，关闭连接
+  } else {
+    while (sent < total) {
+      ssize_t n = socket_.NonBlockSend(output_buffer_.ReadPosition() + sent,
+                                       total - sent);
+      if (n > 0) {
+        sent += n;
+        continue;
+      }
+      if (n == 0) {
+        channel_.EnableWrite();
+        return;
+      }
+      Release();
+      return;
+    }
     Release();
     return;
   }
@@ -248,6 +317,9 @@ void Connection::CancelInactiveReleaseInLoop() {
 }
 
 void Connection::DoHandshake() {
+  if (!enable_ssl_) {
+    return;
+  }
   // 发起或继续 TLS 握手
   int ret = SSL_do_handshake(ssl_);
   if (ret == 1) {
