@@ -80,13 +80,13 @@ class OfflineMessage {
       : client_(client) {
   }
   //uid为消息发送者，pid为离线的消息接受者
-  void SingleAppend(const std::string& user_name,const std::string& pid){
-    client_->rpush("offline:single:" + pid, user_name);
+  void SingleAppend(const std::string& pid,const std::string& body){
+    client_->rpush("offline:single:" + pid, body);
   }
 
   
-  void GroupAppend(const std::string& session_name,const std::string& uid){
-    client_->rpush("offline:group:" + uid, session_name);
+  void GroupAppend(const std::string& uid,const std::string& body){
+    client_->rpush("offline:group:" + uid, body);
   }
 
   std::vector<std::string> GetSingle(const std::string& uid){
