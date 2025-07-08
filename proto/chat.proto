@@ -6,8 +6,7 @@ option cc_generic_services = true;
 message UserInfo {
     string user_id = 1;//用户ID
     string nickname = 2;//昵称
-    string description = 3;//个人签名/描述
-    string email = 4; //绑定手机号
+    string email = 3; //绑定手机号
 }
 enum ServerMessageType {
     UserRegisterReqType = 0;
@@ -18,6 +17,11 @@ enum ServerMessageType {
     SetNicknameReqType = 5;
     SetEmailReqType = 6;
     SetPassword = 7;
+    EmailFriendAddReqType = 8; 
+    NicknameFriendAddReqType = 9;
+    GetFriendApplyReqtype = 10;
+    GetFriendListReqType = 11;
+    SovelFriendApplyReqType = 12;
 }
 
 enum ClientMessageType{
@@ -29,6 +33,12 @@ enum ClientMessageType{
     SetNicknameRspType = 5;
     SetEmailRspType = 6;
     SetPasswordRspType = 7;
+    FriendLoginNoticeType = 8;
+    EmailFriendAddRspType = 9;
+    NicknameFriendAddRspType = 10;
+    GetFriendApplyRsptype = 11;
+    GetFriendListRspType = 12;
+    SovelFriendApplyRspType = 13;
 }
 
 //----------------------------
@@ -45,8 +55,23 @@ message UserRegisterRsp {
     string errmsg = 2;
 }
 
+enum MessageType {
+    file = 0;
+    string = 1;
+}
 
-//----------------------------
+message OffMessageofFriend{
+    string friend_name = 1;
+    MessageType message_type = 2;
+    string body = 3;
+}
+
+message OffMessageofSession{
+    string session_name = 1;
+    MessageType message_type = 2;
+    string body = 3;
+}
+
 //用户名登录 
 message UserLoginReq {
     string nickname = 1;
@@ -56,13 +81,13 @@ message UserLoginRsp {
     bool success = 1;
     string errmsg = 2;
     string user_id = 3;
-    repeated string friend_name = 4;
-    repeated string group_name = 5;
+    string email = 4;
+    repeated OffMessageofFriend friend = 5;
+    repeated OffMessageofSession session = 6;
 }
 
 
-//----------------------------
-//手机号验证码获取
+
 message EmailVerifyCodeReq {
     string email = 1;
 }
@@ -75,7 +100,7 @@ message EmailVerifyCodeRsp {
 //----------------------------
 
 //----------------------------
-//手机号登录
+
 message EmailLoginReq {
     string email = 1;
     string verify_code_id = 2;
@@ -85,14 +110,13 @@ message EmailLoginRsp {
     bool success = 1;
     string errmsg = 2;
     string user_id = 3;
-    repeated string friend_name = 4;
-    repeated string group_name = 5;
+    string email = 4;
+    repeated OffMessageofFriend friend = 5;
+    repeated OffMessageofSession session = 6;
 }
-//个人信息获取-这个只用于获取当前登录用户的信息
-//  客户端传递的时候只需要填充session_id即可
-//其他个人/好友信息的获取在好友操作中完成
+
 message GetUserInfoReq {
-    optional string user_id = 1;    // 这个字段是网关进行身份鉴权之后填入的字段
+    string user_id = 1;    // 这个字段是网关进行身份鉴权之后填入的字段
 }
 message GetUserInfoRsp {
     bool success = 1;
@@ -110,10 +134,9 @@ message SetUserNicknameRsp {
     string errmsg = 2; 
 }
 
-//----------------------------
-//用户手机修改 
+
 message SetUserEmailReq {
-    optional string user_id = 1;
+    string user_id = 1;
     string email = 2;
     string email_verify_code_id = 3;
     string email_verify_code = 4;
@@ -134,16 +157,55 @@ message SetUserPasswordRsp{
     string errmsg = 2; 
 }
 
-message UserExitReq{
-    string request_id = 1;
-    optional string user_id = 2;
-}
-message UserExitRsp{
-    string request_id = 1;
-    bool success = 2;
-    string errmsg = 3; 
+message FriendLoginNotice{
+    string name = 1;
 }
 
+message EmailFriendAddReq{
+    string user_id = 1;
+    string email = 2;
+}
+message EmailFriendAddRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message NicknameFriendAddReq{
+    string user_id = 1;
+    string nickname = 2;
+}
+message NicknameFriendAddRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message GetFriendApplyReq{
+    string user_id = 1;
+}
+message GetFriendApplyRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated UserInfo user_info = 3;
+}
+
+message GetFriendListReq{
+    string user_id = 1;
+}
+message GetFriendListRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated UserInfo friend_list = 3;
+}
+
+message SovelFriendApplyReq{
+    string user_id = 1;
+    string peer_id = 2;
+    bool agree = 3;
+}
+message SovelFriendApplyRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
 
 message ServerMessage{
     ServerMessageType type = 1;
@@ -156,6 +218,11 @@ message ServerMessage{
         SetUserNicknameReq set_user_nickname_req = 7;
         SetUserEmailReq set_user_email_req = 8;
         SetUserPasswordReq set_user_password_req = 9;
+        EmailFriendAddReq email_friend_add_req = 10;
+        NicknameFriendAddReq nickname_friend_add_req = 11;
+        GetFriendApplyReq get_friend_apply = 12;
+        GetFriendListReq get_friend_list_req = 13;
+        SovelFriendApplyReq sovel_friend_apply_req = 14;
     }
 }
 
@@ -170,5 +237,11 @@ message ClientMessage{
         SetUserNicknameRsp set_user_nickname_rsp = 7;
         SetUserEmailRsp set_user_email_rsp = 8;
         SetUserPasswordRsp set_user_password_rsp = 9;
+        FriendLoginNotice friend_login_notice = 10;
+        EmailFriendAddRsp email_friend_add_rsp = 11;
+        NicknameFriendAddRsp nickname_friend_add_rsp = 12;
+        GetFriendApplyRsp get_friend_apply_rsp = 13;
+        GetFriendListRsp get_friend_list_rsp = 14;
+        SovelFriendApplyRsp sovel_friend_apply_rsp = 15;
     }
-}   
+}
