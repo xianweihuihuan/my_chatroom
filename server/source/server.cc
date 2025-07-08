@@ -27,7 +27,7 @@ DEFINE_string(skey, "../../key/server.key", "SSL服务端密钥");
 int main(int argc,char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  Xianwei::TcpServer sp(8080,FLAGS_scrt,FLAGS_skey);
+  Xianwei::TcpServer sp(8080,true,FLAGS_scrt,FLAGS_skey);
   sp.SetMessageCallback(Xianwei::OnMessage);
   sp.SetClosedCallback(Xianwei::Onclose);
   sp.SetMysqlMessage(FLAGS_mysql_user, FLAGS_mysql_pswd, FLAGS_mysql_host,
