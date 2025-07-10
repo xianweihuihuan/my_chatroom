@@ -86,7 +86,7 @@ class Message {
   odb::nullable<std::string> _content;
 #pragma db type("varchar(64)")
   odb::nullable<std::string> _file_id;
-#pragma db type("varchar(128)")
+#pragma db type("varchar(128)") index
   odb::nullable<std::string> _file_name;
   odb::nullable<unsigned int> _file_size;
 };
