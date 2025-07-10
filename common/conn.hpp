@@ -1,19 +1,20 @@
 #pragma once
 #include <unordered_map>
+#include <shared_mutex>
 #include "Connection.h"
 
 namespace Xianwei {
 class Conn {
  public:
   void Insert(const PtrConnection& conn, const std::string& uid) {
-    std::unique_lock<std::mutex> mtx(lock_);
+    std::unique_lock<std::shared_mutex> mtx(lock_);
     conn_uid_.emplace(std::make_pair(conn, uid));
     uid_conn_.emplace(std::make_pair(uid, conn));
     LOG_ERROR("新增长链接{}", uid);
   }
 
   PtrConnection Connection(const std::string& uid) {
-    std::unique_lock<std::mutex> mtx(lock_);
+    std::shared_lock<std::shared_mutex> mtx(lock_);
     auto it = uid_conn_.find(uid);
     if (it == uid_conn_.end()) {
       LOG_DEBUG("未找到{}长链接信息", uid);
@@ -23,7 +24,7 @@ class Conn {
   }
 
   std::string Uid(const PtrConnection& conn) {
-    std::unique_lock<std::mutex> mtx(lock_);
+    std::shared_lock<std::shared_mutex> mtx(lock_);
     auto it = conn_uid_.find(conn);
     if (it == conn_uid_.end()) {
       LOG_DEBUG("未找到连接信息");
@@ -34,7 +35,7 @@ class Conn {
 
 
   void Remove(const PtrConnection& conn) {
-    std::unique_lock<std::mutex> mtx(lock_);
+    std::unique_lock<std::shared_mutex> mtx(lock_);
     auto it = conn_uid_.find(conn);
     if (it == conn_uid_.end()) {
       LOG_ERROR("未找到连接信息");
@@ -46,7 +47,7 @@ class Conn {
   }
 
  private:
-  std::mutex lock_;
+  std::shared_mutex lock_;
   std::unordered_map<PtrConnection, std::string> conn_uid_;
   std::unordered_map<std::string, PtrConnection> uid_conn_;
 };

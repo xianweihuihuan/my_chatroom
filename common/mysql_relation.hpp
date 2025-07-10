@@ -10,9 +10,8 @@ class RelationTable {
   using ptr = std::shared_ptr<RelationTable>;
   RelationTable(const std::shared_ptr<odb::core::database>& db) : db_(db) {}
 
-  bool Insert(const std::string& uid, const std::string& pid) {
+  bool Insert(const std::string& uid, const std::string& pid,const std::string& sid) {
     try {
-      std::string sid = uuid();
       Relation r1(uid, pid, sid, level::unignore);
       Relation r2(pid, uid, sid, level::unignore);
       odb::transaction trans(db_->begin());
@@ -120,6 +119,28 @@ class RelationTable {
       return false;
     }
     return true;
+  }
+
+  std::string SessionId(const std::string& uid,const std::string& pid){
+    std::string ret;
+    try {
+      odb::transaction trans(db_->begin());
+      typedef odb::query<Relation> query;
+      typedef odb::result<Relation> result;
+      typedef odb::object_traits<Relation>::pointer_type relation_ptr;
+      relation_ptr res = db_->query_one<Relation>(query::user_id == uid &&
+                                         query::peer_id == pid);
+      if (!res) {
+        LOG_ERROR("未找到好友关系{}-{}", uid, pid);
+        return std::string();
+      }
+      ret = res->SessionId();
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("查找好友关系{}-{}失败",uid,pid);
+      return std::string();
+    }
+    return ret;
   }
 
   std::vector<std::string> Friends(const std::string& uid) {
