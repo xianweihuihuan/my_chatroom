@@ -4,6 +4,7 @@ project(chatroom)
 set(target "client")
 
 
+
 set(proto_srcs "")
 set(proto_path ${CMAKE_CURRENT_SOURCE_DIR}/../proto)
 set(proto_files chat.proto)
