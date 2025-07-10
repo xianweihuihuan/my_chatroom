@@ -22,7 +22,14 @@ enum ServerMessageType {
     GetFriendApplyReqtype = 10;
     GetFriendListReqType = 11;
     SovelFriendApplyReqType = 12;
+    IgnoreFriendReqType = 13;
+    UnIgnoreFriendReqType = 14;
+    GetFriendInfoReqType = 15;
+    FriendSendStringReqType = 16;
+    DeleteFriendReqType = 17;
+    FriendHistoryMessageReqType = 18;
 }
+
 
 enum ClientMessageType{
     UserRegisterRspType = 0;
@@ -39,6 +46,13 @@ enum ClientMessageType{
     GetFriendApplyRsptype = 11;
     GetFriendListRspType = 12;
     SovelFriendApplyRspType = 13;
+    IgnoreFriendRspType = 14;
+    UnIgnoreFriendRspType = 15;
+    GetFriendInfoRepType = 16;
+    FriendSendStringRspType = 17;
+    FriendMessageNoticeType = 18;
+    DeleteFriendRspType = 19;
+    FriendHistoryMessageRspType = 20;
 }
 
 //----------------------------
@@ -60,16 +74,17 @@ enum MessageType {
     string = 1;
 }
 
-message OffMessageofFriend{
+message MessageofFriend{
     string friend_name = 1;
     MessageType message_type = 2;
     string body = 3;
 }
 
-message OffMessageofSession{
+message MessageofSession{
     string session_name = 1;
-    MessageType message_type = 2;
-    string body = 3;
+    string sender_name = 2;
+    MessageType message_type = 3;
+    string body = 4;
 }
 
 //用户名登录 
@@ -82,8 +97,8 @@ message UserLoginRsp {
     string errmsg = 2;
     string user_id = 3;
     string email = 4;
-    repeated OffMessageofFriend friend = 5;
-    repeated OffMessageofSession session = 6;
+    repeated MessageofFriend friend = 5;
+    repeated MessageofSession session = 6;
 }
 
 
@@ -111,12 +126,12 @@ message EmailLoginRsp {
     string errmsg = 2;
     string user_id = 3;
     string email = 4;
-    repeated OffMessageofFriend friend = 5;
-    repeated OffMessageofSession session = 6;
+    repeated MessageofFriend friend = 5;
+    repeated MessageofSession session = 6;
 }
 
 message GetUserInfoReq {
-    string user_id = 1;    // 这个字段是网关进行身份鉴权之后填入的字段
+    string user_id = 1;    
 }
 message GetUserInfoRsp {
     bool success = 1;
@@ -207,6 +222,69 @@ message SovelFriendApplyRsp{
     string errmsg = 2;
 }
 
+message IgnoreFriendReq{
+    string user_id = 1;
+    string peer_id = 2;
+}
+message IgnoreFriendRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message UnIgnoreFriendReq{
+    string user_id = 1;
+    string peer_id = 2;
+}
+message UnIgnoreFriendRsp{
+    bool success = 1;
+    string errmsg  = 2;
+}
+
+message GetFriendInfoReq{
+    string user_id = 1;
+    string peer_id = 2;
+}
+message GetFriendInfoRsp{
+    bool success = 1;
+    string errmsg = 2;
+    UserInfo friend_info = 3;
+}
+
+message FriendSendStringReq{
+    string user_id = 1;
+    string peer_id = 2;
+    string message = 3;
+}
+message FriendSendStringRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+message FriendMessageNotice{
+    string friend_name = 1;
+    MessageType message_type = 2;
+    string body = 3;
+}
+
+message DeleteFriendReq{
+    string user_id = 1;
+    string peer_id = 2;
+}
+message DeleteFriendRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message FriendHistoryMessageReq{
+    string user_id = 1;
+    string peer_id = 2;
+    int32 message_size = 3;
+}
+message FriendHistoryMessageRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated MessageofFriend message = 3;
+}
+
 message ServerMessage{
     ServerMessageType type = 1;
     oneof payload {
@@ -223,6 +301,12 @@ message ServerMessage{
         GetFriendApplyReq get_friend_apply = 12;
         GetFriendListReq get_friend_list_req = 13;
         SovelFriendApplyReq sovel_friend_apply_req = 14;
+        IgnoreFriendReq ignore_friend_req = 15;
+        UnIgnoreFriendReq unignore_friend_req =16;
+        GetFriendInfoReq get_friend_info_req = 17;
+        FriendSendStringReq friend_send_string_req = 18;
+        DeleteFriendReq delete_friend_req = 19;
+        FriendHistoryMessageReq friend_history_message_req = 20;
     }
 }
 
@@ -243,5 +327,12 @@ message ClientMessage{
         GetFriendApplyRsp get_friend_apply_rsp = 13;
         GetFriendListRsp get_friend_list_rsp = 14;
         SovelFriendApplyRsp sovel_friend_apply_rsp = 15;
+        IgnoreFriendRsp ignore_friend_rsp = 16;
+        UnIgnoreFriendRsp unignore_friend_rsp = 17;
+        GetFriendInfoRsp get_friend_info_rsp = 18;
+        FriendSendStringRsp friend_send_string_rsp = 19;
+        FriendMessageNotice friend_message_notice = 20;
+        DeleteFriendRsp delete_friend_rsp = 21;
+        FriendHistoryMessageRsp friend_history_message_rsp = 22;
     }
 }
