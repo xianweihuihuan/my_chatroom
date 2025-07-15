@@ -1,0 +1,51 @@
+syntax = "proto3";
+package Xianwei;
+option cc_generic_services = true;
+
+enum FileSendType {
+  FileSendFromBegin = 0;
+  FileSendContinue = 1;
+}
+
+enum FileServerType {
+  FileSendReqType = 0;
+  FileGetReqType = 1;
+}
+
+enum FileClientType {
+  FileSendRspType = 0;
+  FileGetRspType = 1;
+}
+
+message FileSendReq{
+  string file_id = 1;
+  FileSendType send_type = 2;
+}
+message FileSendRsp{
+  bool success = 1;
+  string errmsg = 2;
+  int32 file_sz = 3;
+}
+
+message FileGetReq{
+  string file_id = 1;
+}
+message FileGetRsp{
+  bool success = 1;
+  string errmsg = 2;
+}
+message FileServer{
+  FileServerType type = 1;
+  oneof payload{
+    FileSendReq file_send_req = 2;
+    FileGetReq file_get_req = 3;
+  }
+}
+
+message FileClient{
+  FileClientType type = 1;
+  oneof payload{
+    FileSendRsp file_send_rsp = 2;
+    FileGetRsp file_get_rsp = 3;
+  }
+}

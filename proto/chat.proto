@@ -8,6 +8,10 @@ message UserInfo {
     string nickname = 2;//昵称
     string email = 3; //绑定手机号
 }
+message GroupInfo{
+    string session_id = 1;
+    string session_name = 2;
+}
 enum ServerMessageType {
     UserRegisterReqType = 0;
     UserLoginReqType = 1;
@@ -25,9 +29,19 @@ enum ServerMessageType {
     IgnoreFriendReqType = 13;
     UnIgnoreFriendReqType = 14;
     GetFriendInfoReqType = 15;
-    FriendSendStringReqType = 16;
+    FriendSendMessageReqType = 16;
     DeleteFriendReqType = 17;
     FriendHistoryMessageReqType = 18;
+    FriendSendFileReqType = 19;
+    FriendGetFileReqType = 20;
+    CreateGroupReqType = 21;
+    GetGroupListReqType = 22;
+    UserAddGroupReqType = 23;
+    GetSessionApplyReqType = 24;
+    SovelGroupApplyReqType = 25;
+    GetMemberListReqType = 26;
+    SetGroupAdminReqType = 27;
+    CancelGroupAdminReqType = 28;
 }
 
 
@@ -49,10 +63,22 @@ enum ClientMessageType{
     IgnoreFriendRspType = 14;
     UnIgnoreFriendRspType = 15;
     GetFriendInfoRepType = 16;
-    FriendSendStringRspType = 17;
+    FriendSendMessageRspType = 17;
     FriendMessageNoticeType = 18;
     DeleteFriendRspType = 19;
     FriendHistoryMessageRspType = 20;
+    FriendSendFileRspType = 21;
+    FriendGetFileRspType = 22;
+    CreateGroupRspType = 23;
+    GetGroupListRspType = 24;
+    UserAddGroupRspType = 25;
+    FriendApplyNoticeType = 26;
+    GetSessionApplyRspType = 27;
+    GroupApplyNoticeType = 28;
+    SovelGroupApplyRspType = 29;
+    GetMemberListRspType = 30;
+    SetGroupAdminRspType = 31;
+    CancelGroupAdminRspType = 32;
 }
 
 //----------------------------
@@ -87,6 +113,16 @@ message MessageofSession{
     string body = 4;
 }
 
+enum UserType{
+    person = 0;
+    admin = 1;
+    owner = 2;
+}
+message MemberInfo{
+    UserType type = 1;
+    string user_id = 2;
+    string name = 3;
+}
 //用户名登录 
 message UserLoginReq {
     string nickname = 1;
@@ -101,7 +137,10 @@ message UserLoginRsp {
     repeated MessageofSession session = 6;
 }
 
-
+message MessageofSend{
+    MessageType message_type = 1;
+    string body = 2;
+}
 
 message EmailVerifyCodeReq {
     string email = 1;
@@ -184,6 +223,10 @@ message EmailFriendAddRsp{
     bool success = 1;
     string errmsg = 2;
 }
+message FriendApplyNotice{
+    string name = 1;
+}
+
 
 message NicknameFriendAddReq{
     string user_id = 1;
@@ -250,12 +293,12 @@ message GetFriendInfoRsp{
     UserInfo friend_info = 3;
 }
 
-message FriendSendStringReq{
+message FriendSendMessageReq{
     string user_id = 1;
     string peer_id = 2;
-    string message = 3;
+    MessageofSend message = 3;
 }
-message FriendSendStringRsp{
+message FriendSendMessageRsp{
     bool success = 1;
     string errmsg = 2;
 }
@@ -285,6 +328,115 @@ message FriendHistoryMessageRsp{
     repeated MessageofFriend message = 3;
 }
 
+
+
+message FriendSendFileReq{
+    string user_id = 1;
+    string peer_id = 2;
+    string file_name = 3;
+}
+message FriendSendFileRsp{
+    bool success = 1;
+    string errmsg = 2;
+    string file_id = 3;
+    bool ifexist = 4;
+}
+
+message FriendGetFileReq{
+    string user_id = 1;
+    string peer_id  =2;
+    string send_id = 3;
+    string file_name = 4;
+}
+message FriendGetFileRsp{
+    bool success = 1;
+    string errmsg = 2;
+    string file_id = 3;
+}
+
+message CreateGroupReq{
+    string user_id = 1;
+    string session_name = 2;
+    repeated string member_id = 3;
+}
+message CreateGroupRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message GetGroupListReq{
+    string user_id = 1;
+}
+message GetGroupListRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated GroupInfo group_list = 3;
+}
+
+message UserAddGroupReq{
+    string user_id = 1;
+    string session_name = 2;
+}
+message UserAddGroupRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+message GroupApplyNotice{
+    string session_name = 1;
+    string user_name = 2;
+}
+
+message GetSessionApplyReq{
+    string user_id = 1;
+    string session_id = 2;
+}
+message GetSessionApplyRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated UserInfo user_info = 3;
+}
+
+message SovelGroupApplyReq{
+    string user_id = 1;
+    string session_id = 2;
+    string peer_id = 3;
+    bool agree = 4;
+}
+message SovelGroupApplyRsp{
+    bool success = 1;
+    string errmsg  = 2;
+}
+
+message GetMemberListReq{
+    string user_id = 1;
+    string session_id = 2;
+}
+message GetMemberListRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated MemberInfo member_info = 3;
+}
+
+message SetGroupAdminReq{
+    string user_id = 1;
+    string session_id = 2;
+    string peer_id = 3;
+}
+message SetGroupAdminRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message CancelGroupAdminReq{
+    string user_id = 1;
+    string session_id = 2;
+    string peer_id = 3;
+}
+message CancelGroupAdminRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
 message ServerMessage{
     ServerMessageType type = 1;
     oneof payload {
@@ -304,11 +456,22 @@ message ServerMessage{
         IgnoreFriendReq ignore_friend_req = 15;
         UnIgnoreFriendReq unignore_friend_req =16;
         GetFriendInfoReq get_friend_info_req = 17;
-        FriendSendStringReq friend_send_string_req = 18;
+        FriendSendMessageReq friend_send_message_req = 18;
         DeleteFriendReq delete_friend_req = 19;
         FriendHistoryMessageReq friend_history_message_req = 20;
+        FriendSendFileReq friend_send_file_req = 21;
+        FriendGetFileReq friend_get_file_req = 22;
+        CreateGroupReq create_group_req = 23;
+        GetGroupListReq get_group_list_req = 24;
+        UserAddGroupReq user_add_group_req = 25;
+        GetSessionApplyReq get_session_apply_req = 26;
+        SovelGroupApplyReq sovel_group_apply_req = 27;
+        GetMemberListReq get_member_list_req = 28;
+        SetGroupAdminReq set_group_admin_req = 29;
+        CancelGroupAdminReq cancel_group_admin_req = 30;
     }
 }
+
 
 message ClientMessage{
     ClientMessageType type = 1;
@@ -330,9 +493,21 @@ message ClientMessage{
         IgnoreFriendRsp ignore_friend_rsp = 16;
         UnIgnoreFriendRsp unignore_friend_rsp = 17;
         GetFriendInfoRsp get_friend_info_rsp = 18;
-        FriendSendStringRsp friend_send_string_rsp = 19;
+        FriendSendMessageRsp friend_send_message_rsp = 19;
         FriendMessageNotice friend_message_notice = 20;
         DeleteFriendRsp delete_friend_rsp = 21;
         FriendHistoryMessageRsp friend_history_message_rsp = 22;
+        FriendSendFileRsp friend_send_file_rsp = 23;
+        FriendGetFileRsp friend_get_file_rsp = 24;
+        CreateGroupRsp create_group_rsp = 25;
+        GetGroupListRsp get_group_list_rsp = 26;
+        UserAddGroupRsp user_add_group_rsp = 27;
+        FriendApplyNotice friend_apply_notice = 28;
+        GetSessionApplyRsp get_session_apply_rsp = 29;
+        GroupApplyNotice group_apply_notice = 30;
+        SovelGroupApplyRsp sovel_group_apply_rsp = 31;
+        GetMemberListRsp get_member_list_rsp = 32;
+        SetGroupAdminRsp set_group_admin_rsp = 33;
+        CancelGroupAdminRsp cancel_group_admin_rsp = 34;
     }
 }
