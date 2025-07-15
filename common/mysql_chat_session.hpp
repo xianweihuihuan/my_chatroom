@@ -63,6 +63,42 @@ class ChatSessionTable {
     return true;
   }
 
+  bool Exist(const std::string session_name){
+    bool flag;
+    try {
+      odb::transaction trans(_db->begin());
+      typedef odb::query<ChatSession> query;
+      typedef odb::result<ChatSession> result;
+      result r(
+          _db->query<ChatSession>(query::session_name == session_name));
+      flag = !r.empty();
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取会话存在信息失败，{}", e.what());
+      return false;
+    }
+    return flag;
+  }
+
+  std::string Sid(const std::string session_name) {
+    std::string ret;
+    try {
+      typedef odb::result<ChatSession> cresult;
+      typedef odb::query<ChatSession> cquery;
+      odb::transaction trans(_db->begin());
+      auto res =
+          _db->query_one<ChatSession>(cquery::session_name == session_name);
+      if (res) {
+        ret = res->SessionId();
+      }
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("查找会话ID失败，{}", e.what());
+      return "";
+    }
+    return ret;
+  }
+
   std::shared_ptr<ChatSession> Select(const std::string& sid) {
     std::shared_ptr<ChatSession> res;
     try {
@@ -77,6 +113,7 @@ class ChatSessionTable {
     return res;
   }
 
+  //废弃
   std::vector<SingleChatSession> SingleChat(const std::string& uid) {
     std::vector<SingleChatSession> res;
     try {
@@ -100,6 +137,7 @@ class ChatSessionTable {
     try {
       typedef odb::result<GroupChatSession> result;
       typedef odb::query<GroupChatSession> query;
+      odb::transaction trans(_db->begin());
       result r(_db->query<GroupChatSession>(query::css::chat_type ==
                                                 ChatType::GROUP &&
                                             query::csm::user_id == uid));
@@ -107,8 +145,9 @@ class ChatSessionTable {
       for (auto& rr : r) {
         res.emplace_back(rr);
       }
+      trans.commit();
     } catch (const std::exception& e) {
-      LOG_ERROR("获取用户{}的单聊会话失败：{}", uid, e.what());
+      LOG_ERROR("获取用户{}的群聊会话失败：{}", uid, e.what());
     }
     return std::move(res);
   }

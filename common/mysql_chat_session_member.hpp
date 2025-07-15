@@ -3,7 +3,6 @@
 #include "chat_session_member.hxx"
 #include "mysql.h"
 
-
 namespace Xianwei {
 class ChatSessionMemberTable {
  public:
@@ -70,10 +69,46 @@ class ChatSessionMemberTable {
     return true;
   }
 
-  std::vector<ChatSessionMember> Members(const std::string& session_id){
+  std::shared_ptr<ChatSessionMember> Select(const std::string& sid,
+                                            const std::string& uid) {
+    std::shared_ptr<ChatSessionMember> ret;
+    try {
+      typedef odb::query<ChatSessionMember> query;
+      typedef odb::result<ChatSessionMember> result;
+      odb::transaction trans(_db->begin());
+      auto res = _db->query<ChatSessionMember>(query::session_id == sid &&
+                                               query::user_id == uid);
+      if (!res.empty()) {
+        ret = std::make_shared<ChatSessionMember>(*res.begin());
+      }
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取会话成员信息{}-{}失败,{}", sid, uid, e.what());
+      return nullptr;
+    }
+    return ret;
+  }
+
+  bool Exist(const std::string& sid, const std::string& uid) {
+    bool flag;
+    try {
+      odb::transaction trans(_db->begin());
+      typedef odb::query<ChatSessionMember> query;
+      typedef odb::result<ChatSessionMember> result;
+      result r(_db->query<ChatSessionMember>(query::user_id == uid &&
+                                             query::session_id == sid));
+      flag = !r.empty();
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取群聊申请{}-{}失败：{}", sid, uid, e.what());
+      return false;
+    }
+    return flag;
+  }
+
+  std::vector<ChatSessionMember> Members(const std::string& session_id) {
     std::vector<ChatSessionMember> res;
-    try
-    {
+    try {
       odb::transaction trans(_db->begin());
       typedef odb::query<ChatSessionMember> query;
       typedef odb::result<ChatSessionMember> result;
@@ -89,6 +124,18 @@ class ChatSessionMemberTable {
       return res;
     }
     return res;
+  }
+
+  bool Updata(std::shared_ptr<ChatSessionMember> ev) {
+    try {
+      odb::transaction trans(_db->begin());
+      _db->update(*ev);
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("更新会话成员失败：{}", e.what());
+      return false;
+    }
+    return true;
   }
 
  private:
