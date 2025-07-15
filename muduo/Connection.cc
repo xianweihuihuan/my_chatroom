@@ -148,9 +148,14 @@ void Connection::HandleRead() {
       }
       return;
     }
-    if (ret < 0) {
+    if(ret == 0){
       ShutdownInLoop();
+      return;
     }
+    if (errno == EAGAIN || errno == EINTR) {
+      return;  
+    }
+    ShutdownInLoop();
   }
 }
 
@@ -198,7 +203,7 @@ void Connection::HandleWrite() {
         sent += n;
         continue;
       }
-      if (n == 0) {
+      if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
         channel_.EnableWrite();
         return;
       }
@@ -351,5 +356,24 @@ void Connection::DoHandshake() {
 
 EventLoop* Connection::GetOwner() {
   return loop_;
+}
+
+ssize_t Connection::Recv(void* buf, size_t len) {
+  if (status_ != CONNECTED)
+    return -1;
+  if (enable_ssl_) {
+    int ret = SSL_read(ssl_, buf, static_cast<int>(len));
+    if (ret > 0)
+      return ret;
+    int err = SSL_get_error(ssl_, ret);
+    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+      return 0;
+    return -1;
+  }
+  return socket_.NonBlockRecv(buf, len);
+}
+
+Socket Connection::GetSocket(){
+  return socket_;
 }
 }  // namespace Xianwei

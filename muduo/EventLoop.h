@@ -20,6 +20,7 @@
 #include "mysql_message.hpp"
 #include "mysql_relation.hpp"
 #include "mysql_user.hpp"
+#include "mysql_file.hpp"
 #include "verification_code_send.h"
 
 namespace Xianwei {
@@ -165,6 +166,8 @@ class EventLoop {
   FriendApplyTable::ptr GetFriendApplyTable() { return friendapply_table_; }
   ChatSessionMemberTable::ptr GetChatSessionMemberTable() { return csm_table_; }
   ChatSessionTable::ptr GetChatSessionTable() { return css_table_; }
+  FileTable::ptr GetFileTable() { return file_table_; }
+  SessionApplyTable::ptr GetSessionApplyTable() { return session_table_; }
 
   Status::ptr GetStatus() { return redis_status_; }
   Codes::ptr GetCodes() { return redis_codes_; }
@@ -200,6 +203,8 @@ class EventLoop {
   RelationTable::ptr relation_table_;
   ChatSessionMemberTable::ptr csm_table_;
   ChatSessionTable::ptr css_table_;
+  FileTable::ptr file_table_;
+  SessionApplyTable::ptr session_table_;
 
   Status::ptr redis_status_;
   Codes::ptr redis_codes_;

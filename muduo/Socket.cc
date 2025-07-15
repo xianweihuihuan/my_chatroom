@@ -71,13 +71,16 @@ int Socket::Accept() {
 
 ssize_t Socket::Recv(void* buf, size_t len, int flag) {
   ssize_t ret = recv(sockfd_, buf, len, flag);
-  if (ret <= 0) {
-    if (errno == EAGAIN || errno == EINTR)
-      return 0;
-    LOG_ERROR("接收数据失败: {}", strerror(errno));
-    return -1;
+  if (ret > 0) {
+    return ret;
   }
-  return ret;
+  if (ret == 0) {
+    return 0;
+  }
+  if (errno == EAGAIN || errno == EINTR)
+    return -1;
+  LOG_ERROR("接收数据失败: {}", strerror(errno));
+  return -1;
 }
 
 ssize_t Socket::NonBlockRecv(void* buf, size_t len) {
@@ -86,13 +89,13 @@ ssize_t Socket::NonBlockRecv(void* buf, size_t len) {
 
 ssize_t Socket::Send(const void* buf, size_t len, int flag) {
   ssize_t ret = send(sockfd_, buf, len, flag);
-  if (ret < 0) {
-    if (errno == EAGAIN || errno == EINTR)
-      return 0;
-    LOG_ERROR("发送数据失败: {}", strerror(errno));
+  if (ret >= 0)
+    return ret;
+  if (errno == EAGAIN || errno == EINTR) {
     return -1;
   }
-  return ret;
+  LOG_ERROR("发送数据失败: {}", strerror(errno));
+  return -1;
 }
 
 ssize_t Socket::NonBlockSend(void* buf, size_t len) {

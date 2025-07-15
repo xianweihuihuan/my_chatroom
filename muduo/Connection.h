@@ -41,6 +41,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   void SetClosedCallback(const ClosedCallback& cb);
   void SetAnyEventCallback(const AnyEventCallback& cb);
   void SetSrvClosedCallback(const ClosedCallback& cb);
+  ssize_t Recv(void* buf, size_t len);
 
   void Established();
   void Send(const char* data, size_t len);
@@ -49,6 +50,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   void EnableInactiveRelease(int sec);
   void CancelInactiveRelease();
   EventLoop* GetOwner();
+  Socket GetSocket();
 
  private:
   void HandleRead();

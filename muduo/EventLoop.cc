@@ -269,6 +269,8 @@ EventLoop::EventLoop(const std::string& mysql_user,
           friendapply_table_(std::make_shared<FriendApplyTable>(mysql_client_)),
           csm_table_(std::make_shared<ChatSessionMemberTable>(mysql_client_)),
           css_table_(std::make_shared<ChatSessionTable>(mysql_client_)),
+          file_table_(std::make_shared<FileTable>(mysql_client_)),
+          session_table_(std::make_shared<SessionApplyTable>(mysql_client_)),
           redis_codes_(std::make_shared<Codes>(redis_client_)),
           redis_status_(std::make_shared<Status>(redis_client_)),
           redis_message_(std::make_shared<OfflineMessage>(redis_client_))
