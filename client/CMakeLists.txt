@@ -7,7 +7,7 @@ set(target "client")
 
 set(proto_srcs "")
 set(proto_path ${CMAKE_CURRENT_SOURCE_DIR}/../proto)
-set(proto_files chat.proto)
+set(proto_files chat.proto file.proto)
 foreach(proto_file ${proto_files})
   string(REPLACE ".proto" ".pb.cc" proto_cc ${proto_file})
   string(REPLACE ".proto" ".pb.h" proto_h ${proto_file})

@@ -11,8 +11,7 @@ DEFINE_string(ca_path, "../../key/ca.crt", "ca证书所在位置");
 
 
 
-void Recv() {
-}
+
 
 int main(int argc,char*argv[]) {
   Xianwei::init_logger(false, "", 0);
@@ -21,7 +20,12 @@ int main(int argc,char*argv[]) {
   SSL_library_init();
   SSL_load_error_strings();
   OpenSSL_add_all_algorithms();
-  
+  file_ip = FLAGS_server_ip;
+  file_dir = "./file_data";
+  mkdir(file_dir.c_str(), 0775);
+  if (file_dir.back() != '/') {
+    file_dir += '/';
+  }
   // 2. 创建 SSL_CTX 并加载 CA
   ctx = SSL_CTX_new(TLS_client_method());
   SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
@@ -44,6 +48,7 @@ int main(int argc,char*argv[]) {
   vcodefd = eventfd(0, EFD_CLOEXEC);
   selfefd = eventfd(0, EFD_CLOEXEC);
   friendefd = eventfd(0, EFD_CLOEXEC);
+  groupefd = eventfd(0, EFD_CLOEXEC);
   Xianwei::Print();
   std::cout << Yellow << "输入”start“以开始：";
   std::string ifstart;

@@ -4,13 +4,17 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <sys/eventfd.h>
+#include <sys/sendfile.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <regex>
 #include "Buffer.h"
 #include "Socket.h"
 #include "chat.pb.h"
+#include "file.pb.h"
 
 #define Tail "\033[m"
 #define Cyan "\033[0m\033[1;36m"
@@ -24,7 +28,9 @@ bool ifrunning = true;
 int vcodefd;
 int selfefd;
 int friendefd;
+int groupefd;
 bool vsuccess;
+bool groupsuccess;
 bool friendsuccess;
 bool selfsuccess;
 SSL* ssl;
@@ -34,10 +40,19 @@ std::string vcode;
 std::string uid;
 std::string uemail;
 std::mutex iolock;
+std::mutex sendfileidlock;
+std::mutex getfilelock;
+std::string send_file_id;
+std::string get_file_id;
+std::string file_ip;
+bool filexist;
+std::string file_dir;
 std::atomic<bool> running{true};
 std::vector<Xianwei::UserInfo> friend_apply;
+std::vector<Xianwei::UserInfo> session_apply;
 std::vector<Xianwei::UserInfo> friend_list;
-
+std::vector<Xianwei::GroupInfo> group_list;
+std::vector<Xianwei::MemberInfo> member_list;
 namespace Xianwei {
 bool Check_nickname(const std::string& nickname) {
   return nickname.size() < 22;
@@ -55,7 +70,7 @@ bool Check_email(const std::string& address) {
 
 void SendToServer(const std::string body) {
   std::string message = std::to_string(body.size()) + "\r\n" + body;
-  SSL_write(ssl, message.c_str(), message.size());
+  int i = SSL_write(ssl, message.c_str(), message.size());
 }
 
 void Print() {
@@ -499,24 +514,24 @@ void HandleMessage(const ClientMessage& msg) {
       }
       WakeUpEventFd(friendefd);
       break;
-    case ClientMessageType::FriendSendStringRspType:
-      if (msg.friend_send_string_rsp().success()) {
+    case ClientMessageType::FriendSendMessageRspType:
+      if (msg.friend_send_message_rsp().success()) {
         {
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Green << "发送成功" << Tail << std::endl;
         }
       } else {
         {
-          if (msg.friend_send_string_rsp().errmsg() == "这不是你的好友") {
+          if (msg.friend_send_message_rsp().errmsg() == "这不是你的好友") {
             deletefriend = true;
           }
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Red << "发送失败，原因："
-                    << msg.friend_send_string_rsp().errmsg() << Tail
+                    << msg.friend_send_message_rsp().errmsg() << Tail
                     << std::endl;
         }
       }
-      WakeUpEventFd(friendefd);
+      //WakeUpEventFd(friendefd);
       break;
     case ClientMessageType::FriendMessageNoticeType: {
       std::unique_lock<std::mutex> mtx(iolock);
@@ -549,7 +564,7 @@ void HandleMessage(const ClientMessage& msg) {
         {
           {
             std::unique_lock<std::mutex> mtx(iolock);
-            std::cout << Green << "删除好友成功" << Tail << std::endl;
+            std::cout << Green << "获取历史消息成功" << Tail << std::endl;
             for (int i = 0; i < msg.friend_history_message_rsp().message_size();
                  ++i) {
               std::cout << Yellow;
@@ -572,14 +587,208 @@ void HandleMessage(const ClientMessage& msg) {
             }
           }
         }
-      }else{
+      } else {
         {
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Red << "获取好友历史消息失败，原因："
-                    << msg.friend_history_message_rsp().errmsg() << Tail << std::endl;
+                    << msg.friend_history_message_rsp().errmsg() << Tail
+                    << std::endl;
         }
       }
       WakeUpEventFd(friendefd);
+      break;
+    case ClientMessageType::FriendSendFileRspType:
+      if (msg.friend_send_file_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(sendfileidlock);
+          send_file_id = msg.friend_send_file_rsp().file_id();
+          filexist = msg.friend_send_file_rsp().ifexist();
+        }
+        friendsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "上传文件失败，原因："
+                    << msg.friend_send_file_rsp().errmsg() << Tail << std::endl;
+        }
+        friendsuccess = false;
+      }
+      WakeUpEventFd(friendefd);
+      break;
+    case ClientMessageType::FriendGetFileRspType:
+      if (msg.friend_get_file_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(getfilelock);
+          get_file_id = msg.friend_get_file_rsp().file_id();
+        }
+        friendsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "下载文件失败，原因"
+                    << msg.friend_get_file_rsp().errmsg() << Tail << std::endl;
+        }
+        friendsuccess = false;
+      }
+      WakeUpEventFd(friendefd);
+      break;
+    case ClientMessageType::CreateGroupRspType:
+      if (msg.create_group_rsp().success()) {
+        if (msg.create_group_rsp().errmsg().empty()) {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Green << "创建群聊成功\n" << Tail;
+          }
+        } else {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Green << "创建群聊成功,但存在非好友关系\n" << Tail;
+          }
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "创建群聊失败，原因："
+                    << msg.create_group_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GetGroupListRspType:
+      if (msg.get_group_list_rsp().success()) {
+        group_list.clear();
+        for (int i = 0; i < msg.get_group_list_rsp().group_list_size(); ++i) {
+          group_list.emplace_back(msg.get_group_list_rsp().group_list(i));
+        }
+        groupsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "获取群聊信息失败，原因："
+                    << msg.get_group_list_rsp().errmsg() << Tail << std::endl;
+        }
+        groupsuccess = false;
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::UserAddGroupRspType:
+      if (msg.user_add_group_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "发送入群申请成功\n" << Tail;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "发送入群申请失败，原因："
+                    << msg.user_add_group_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::FriendApplyNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "[好友申请]：" << msg.friend_apply_notice().name()
+                << Tail << std::endl;
+    } break;
+    case ClientMessageType::GetSessionApplyRspType:
+      if (msg.get_session_apply_rsp().success()) {
+        session_apply.clear();
+        for (int i = 0; i < msg.get_session_apply_rsp().user_info_size(); ++i) {
+          session_apply.emplace_back(msg.get_session_apply_rsp().user_info(i));
+        }
+        groupsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "获取入群申请失败，原因："
+                    << msg.get_session_apply_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+        groupsuccess = false;
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupApplyNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "[入群申请]" << "["
+                << msg.group_apply_notice().session_name()
+                << "]: " << msg.group_apply_notice().user_name() << Tail
+                << std::endl;
+    } break;
+    case ClientMessageType::SovelGroupApplyRspType:
+      if (msg.sovel_group_apply_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "处理入群申请成功\n" << Tail;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "处理入群申请失败，原因："
+                    << msg.sovel_group_apply_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GetMemberListRspType:
+      if (msg.get_member_list_rsp().success()) {
+        member_list.clear();
+        for (int i = 0; i < msg.get_member_list_rsp().member_info_size(); ++i) {
+          if (msg.get_member_list_rsp().member_info(i).type() == owner) {
+            member_list.emplace_back(msg.get_member_list_rsp().member_info(i));
+            break;
+          }
+        }
+        for (int i = 0; i < msg.get_member_list_rsp().member_info_size(); ++i) {
+          if (msg.get_member_list_rsp().member_info(i).type() == admin) {
+            member_list.emplace_back(msg.get_member_list_rsp().member_info(i));
+          }
+        }
+        for (int i = 0; i < msg.get_member_list_rsp().member_info_size(); ++i) {
+          if (msg.get_member_list_rsp().member_info(i).type() == person) {
+            member_list.emplace_back(msg.get_member_list_rsp().member_info(i));
+          }
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "获取群聊成员列表失败,原因："
+                    << msg.get_member_list_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::SetGroupAdminRspType:
+      if(msg.set_group_admin_rsp().success()){
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "设置群聊管理员成功\n" << Tail;
+        }
+      }else{
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "设置群聊管理员失败，原因："
+                    << msg.set_group_admin_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::CancelGroupAdminRspType:
+      if(msg.set_group_admin_rsp().success()){
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "解除群聊管理员成功\n" << Tail;
+        }
+      }else{
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "设置群聊管理员失败，原因："
+                    << msg.set_group_admin_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
       break;
   }
 }
@@ -925,7 +1134,8 @@ void SovelApply() {
   }
   while (!(std::cin >> flag) || flag < 1 || flag > friend_apply.size()) {
     std::cin.clear();  // 清除错误标志位
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');  // 丢弃错误输入
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Red << "不存在编号为此的好友申请，请重新输入\n" << Tail;
   }
@@ -1070,9 +1280,9 @@ void GetFriendInfo(const int& num) {
 
 void SendString(const int& num) {
   ServerMessage req;
-  req.set_type(ServerMessageType::FriendSendStringReqType);
-  req.mutable_friend_send_string_req()->set_user_id(uid);
-  req.mutable_friend_send_string_req()->set_peer_id(
+  req.set_type(ServerMessageType::FriendSendMessageReqType);
+  req.mutable_friend_send_message_req()->set_user_id(uid);
+  req.mutable_friend_send_message_req()->set_peer_id(
       friend_list[num - 1].user_id());
   std::string body;
   std::cout << Cyan << "输入quit以结束\n" << Tail;
@@ -1085,9 +1295,11 @@ void SendString(const int& num) {
     if (body.empty()) {
       continue;
     }
-    req.mutable_friend_send_string_req()->set_message(body);
+    auto tme = req.mutable_friend_send_message_req()->mutable_message();
+    tme->set_message_type(MessageType::string);
+    tme->set_body(body);
     SendToServer(req.SerializeAsString());
-    ReadEventfd(friendefd);
+    //ReadEventfd(friendefd);
     if (deletefriend) {
       return;
     }
@@ -1150,6 +1362,291 @@ void Message(const int& num) {
   ReadEventfd(friendefd);
 }
 
+void FriendSendFile(const int& num) {
+  std::string file_name;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要上传的文件\n" << Tail;
+  }
+  std::cin >> file_name;
+  while (!std::filesystem::exists(file_name)) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "文件不存在，请重新输入\n" << Tail;
+    }
+    std::cin >> file_name;
+  }
+  std::filesystem::path p(file_name);
+  ServerMessage req;
+  req.set_type(ServerMessageType::FriendSendFileReqType);
+  req.mutable_friend_send_file_req()->set_user_id(uid);
+  req.mutable_friend_send_file_req()->set_peer_id(
+      friend_list[num - 1].user_id());
+  req.mutable_friend_send_file_req()->set_file_name(p.filename().string());
+  SendToServer(req.SerializeAsString());
+  std::string tmp_file_id;
+  bool tmp_file_exist;
+  ReadEventfd(friendefd);
+  if (!friendsuccess) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(sendfileidlock);
+    tmp_file_id = send_file_id;
+    tmp_file_exist = filexist;
+  }
+  bool ifcontinue;
+  if (tmp_file_exist) {
+    int flag = 0;
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "你曾经上传过该文件,请选择\n"
+                << Tail << Cyan << "(1)继续上传\n"
+                << "(2)重新上传\n"
+                << "(3)放弃上传\n"
+                << Tail;
+    }
+    while (!(std::cin >> flag) || flag < 1 || flag > 3) {
+      std::cin.clear();  // 清除错误标志位
+      std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                      '\n');  // 丢弃错误输入
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "不存在编号为此的操作，请重新输入\n" << Tail;
+      }
+    }
+    switch (flag) {
+      case 1:
+        ifcontinue = true;
+        break;
+      case 2:
+        ifcontinue = false;
+        break;
+      case 3:
+        return;
+    }
+  } else {
+    ifcontinue = false;
+  }
+  std::thread send_file([file_name, tmp_file_id, ifcontinue, num, p]() {
+    Socket fs;
+    fs.CreateClient(8085, file_ip);
+    FileServer req;
+    req.set_type(FileServerType::FileSendReqType);
+    if (ifcontinue) {
+      req.mutable_file_send_req()->set_send_type(FileSendContinue);
+    } else {
+      req.mutable_file_send_req()->set_send_type(FileSendFromBegin);
+    }
+    req.mutable_file_send_req()->set_file_id(tmp_file_id);
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    fs.Send(body.c_str(), body.size());
+    char buff[65535];
+    Buffer buf;
+    while (true) {
+      int ssz = fs.Recv(buff, sizeof(buff));
+      buf.WriteAndPush(buff, ssz);
+      std::string lenLine = buf.GetLine();
+      if (lenLine.empty()) {
+        break;
+      }
+      int bodyLen = 0;
+      try {
+        bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+      } catch (...) {
+        buf.Clear();
+        fs.Close();
+        return;
+      }
+      if (buf.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+        break;
+      }
+      buf.MoveReadIndex(lenLine.size());
+      std::string data = buf.ReadAsStringAndPop(bodyLen);
+      FileClient msg;
+      if (!msg.ParseFromString(data)) {
+        continue;
+      }
+      auto rsp = msg.file_send_rsp();
+      if (!rsp.success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "文件上传失败,原因：" << rsp.errmsg() << Tail
+                    << std::endl;
+        }
+        fs.Close();
+        return;
+      } else {
+        auto sz = rsp.file_sz();
+        auto tsz = std::filesystem::file_size(file_name);
+        int file_fd = open(file_name.c_str(), O_RDONLY);
+        if (file_fd == -1) {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Red << "打开文件失败：" << file_name << Tail
+                      << std::endl;
+          }
+          fs.Close();
+          return;
+        }
+        size_t step = 60000;
+        off_t offset = sz;
+        while (offset < tsz) {
+          auto count = std::min(step,
+                                tsz - offset);  // 计算剩余数据大小
+          ssize_t ret =
+              sendfile(fs.Fd(), file_fd, &offset, count);  // 发送文件部分
+          if (ret == -1) {
+            if (errno == EAGAIN || errno == EINTR) {
+              continue;
+            }
+            {
+              std::unique_lock<std::mutex> mtx(iolock);
+              std::cout << Red << "发送文件出错" << std::endl << Tail;
+            }
+            break;
+          }
+        }
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "文件已全部发送完毕" << Tail << std::endl;
+        }
+        close(file_fd);
+        break;
+      }
+    }
+    fs.Close();
+    ServerMessage creq;
+    creq.set_type(ServerMessageType::FriendSendMessageReqType);
+    creq.mutable_friend_send_message_req()->set_user_id(uid);
+    creq.mutable_friend_send_message_req()->set_peer_id(
+        friend_list[num - 1].user_id());
+    auto me = creq.mutable_friend_send_message_req()->mutable_message();
+    me->set_message_type(MessageType::file);
+    me->set_body(p.filename());
+    SendToServer(creq.SerializeAsString());
+    ReadEventfd(friendefd);
+  });
+  send_file.detach();
+}
+
+void FriendGetFile(const int& num) {
+  int flag = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "(1) 我方文件\n"
+              << "(2) 对方文件\n"
+              << "请输入你要获取文件的归属:\n"
+              << Tail;
+  }
+  while (!(std::cin >> flag) || flag < 1 || flag > 3) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "不存在编号为此的操作，请重新输入\n" << Tail;
+    }
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::FriendGetFileReqType);
+  req.mutable_friend_get_file_req()->set_user_id(uid);
+  req.mutable_friend_get_file_req()->set_peer_id(
+      friend_list[num - 1].user_id());
+  if (flag == 1) {
+    req.mutable_friend_get_file_req()->set_send_id(uid);
+  } else {
+    req.mutable_friend_get_file_req()->set_send_id(
+        friend_list[num - 1].user_id());
+  }
+  std::string file_name;
+  {
+    std::cout << Yellow << "请输入你要获取的文件名:\n" << Tail;
+  }
+  std::cin >> file_name;
+  req.mutable_friend_get_file_req()->set_file_name(file_name);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(friendefd);
+  if (!friendsuccess) {
+    return;
+  }
+  std::string tmp_file_id;
+  {
+    std::unique_lock<std::mutex> mtx(getfilelock);
+    tmp_file_id = get_file_id;
+  }
+  std::thread get_file([tmp_file_id, file_name]() {
+    Socket fg;
+    fg.CreateClient(8085, file_ip);
+    FileServer req;
+    req.set_type(FileServerType::FileGetReqType);
+    req.mutable_file_get_req()->set_file_id(tmp_file_id);
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    fg.Send(body.c_str(), body.size());
+    char buff[65535];
+    Buffer buf;
+    while (true) {
+      int ssz = fg.Recv(buff, sizeof(buff));
+      buf.WriteAndPush(buff, ssz);
+      std::string lenLine = buf.GetLine();
+      if (lenLine.empty()) {
+        break;
+      }
+      int bodyLen = 0;
+      try {
+        bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+      } catch (...) {
+        buf.Clear();
+        fg.Close();
+        return;
+      }
+      if (buf.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+        break;
+      }
+      buf.MoveReadIndex(lenLine.size());
+      std::string data = buf.ReadAsStringAndPop(bodyLen);
+      FileClient msg;
+      if (!msg.ParseFromString(data)) {
+        continue;
+      }
+      auto rsp = msg.file_get_rsp();
+      if (!rsp.success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "文件下载失败,原因：" << rsp.errmsg() << Tail
+                    << std::endl;
+        }
+        fg.Close();
+        return;
+      } else {
+        std::ofstream out;
+        out.open(file_dir + file_name,
+                 std::ios::out | std::ios::trunc | std::ios::binary);
+        while (true) {
+          ssize_t sz = fg.Recv(buff, sizeof(buff));
+          if (sz == 0) {
+            std::cout << Green << "文件下载成功" << Tail << std::endl;
+            out.close();
+            break;
+          } else if (sz < 0) {
+            if (sz < 0 && ((errno == EAGAIN || errno == EINTR))) {
+              continue;
+            }
+            out.close();
+            return;
+          }
+          out.write(buff, sz);
+        }
+        break;
+      }
+    }
+    fg.Close();
+  });
+  get_file.detach();
+}
+
 void ToFriend() {
   int flag = 0;
   int i = 0;
@@ -1164,7 +1661,8 @@ void ToFriend() {
     }
     while (!(std::cin >> i) || i <= 0 || i > friend_list.size()) {
       std::cin.clear();  // 清除错误标志位
-      std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');  // 丢弃错误输入
+      std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                      '\n');  // 丢弃错误输入
       {
         std::unique_lock<std::mutex> mtx(iolock);
         std::cout << Red << "请输入有效的好友编号" << Tail << std::endl;
@@ -1181,7 +1679,7 @@ void ToFriend() {
                 << "|                                                      |\n"
                 << "|                   (1) 发送消息                       |\n"
                 << "|                   (2) 发送文件                       |\n"
-                << "|                   (3) 发送文件                       |\n"
+                << "|                   (3) 下载文件                       |\n"
                 << "|                   (4) 屏蔽好友                       |\n"
                 << "|                   (5) 解除屏蔽                       |\n"
                 << "|                   (6) 删除好友                       |\n"
@@ -1203,9 +1701,11 @@ void ToFriend() {
         SendString(i);
         return;
       case 2:
-        break;
+        FriendSendFile(i);
+        return;
       case 3:
-        break;
+        FriendGetFile(i);
+        return;
       case 4:
         IgnoreFriend(i);
         return;
@@ -1349,6 +1849,487 @@ void about() {
   }
 }
 
+void CreateGroup() {
+  ServerMessage req;
+  req.set_type(ServerMessageType::CreateGroupReqType);
+  std::string session_name;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入群聊名字:\n" << Tail;
+  }
+  std::cin >> session_name;
+  while (!Check_nickname(session_name)) {
+    session_name.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "群聊名过长，请重新输入\n";
+      std::cout << Tail;
+    }
+    std::cin >> session_name;
+  }
+  req.mutable_create_group_req()->set_session_name(session_name);
+  req.mutable_create_group_req()->set_user_id(uid);
+  GetFriendList();
+  int num = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入你要选择作为群员的好友编号(输入0以结束)\n"
+              << Tail;
+  }
+  std::unordered_set<std::string> member_uid_list;
+  while (true) {
+    if (!(std::cin >> num) || num < 0 || num > friend_list.size()) {
+      std::cin.clear();
+      std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "请输入有效的好友编号：\n" << Tail;
+      }
+      continue;
+    }
+    if (num == 0) {
+      break;
+    }
+    member_uid_list.emplace(friend_list[num - 1].user_id());
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "请继续输入：\n" << Tail;
+    }
+  }
+  if (member_uid_list.empty()) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "群聊成员不能为空\n" << Tail;
+    }
+    return;
+  }
+  for (const auto& n : member_uid_list) {
+    req.mutable_create_group_req()->add_member_id(n);
+  }
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void GetGroupList() {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GetGroupListReqType);
+  req.mutable_get_group_list_req()->set_user_id(uid);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+  if (!groupsuccess) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow;
+    for (int i = 0; i < group_list.size(); ++i) {
+      std::cout << "(" << i + 1 << ") " << group_list[i].session_name()
+                << std::endl;
+    }
+    std::cout << Tail;
+  }
+}
+
+void UserAddGroup() {
+  ServerMessage req;
+  req.set_type(ServerMessageType::UserAddGroupReqType);
+  req.mutable_user_add_group_req()->set_user_id(uid);
+  std::string session_name;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入群聊名字:\n" << Tail;
+  }
+  std::cin >> session_name;
+  while (!Check_nickname(session_name)) {
+    session_name.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "群聊名过长，请重新输入\n";
+      std::cout << Tail;
+    }
+    std::cin >> session_name;
+  }
+  req.mutable_user_add_group_req()->set_session_name(session_name);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void SovelGroupApply(const int& num) {
+  int flag = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要处理的入群申请编号\n" << Tail;
+  }
+  while (!(std::cin >> flag) || flag < 1 || flag > session_apply.size()) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Red << "不存在编号为此的好友申请，请重新输入\n" << Tail;
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::SovelGroupApplyReqType);
+  std::string agree;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "是否同意该条入群申请(y/n)\n";
+    std::cout << Tail;
+  }
+  std::cin >> agree;
+  while (true) {
+    if (agree == "n" || agree == "no") {
+      req.mutable_sovel_group_apply_req()->set_agree(false);
+      break;
+    }
+    if (agree == "y" || agree == "yes") {
+      req.mutable_sovel_group_apply_req()->set_agree(true);
+      break;
+    }
+    agree.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "未知操作，请重新输入\n";
+      std::cout << Tail;
+    }
+    std::cin >> agree;
+  }
+  req.mutable_sovel_group_apply_req()->set_session_id(
+      group_list[num - 1].session_id());
+  req.mutable_sovel_group_apply_req()->set_user_id(uid);
+  req.mutable_sovel_group_apply_req()->set_peer_id(
+      session_apply[flag - 1].user_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void GetSessionApply(const int& num) {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GetSessionApplyReqType);
+  req.mutable_get_session_apply_req()->set_user_id(uid);
+  req.mutable_get_session_apply_req()->set_session_id(
+      group_list[num - 1].session_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+  if (!groupsuccess) {
+    return;
+  }
+  int flag = 0;
+  while (true) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow;
+      for (int i = 0; i < session_apply.size(); ++i) {
+        std::cout << "(" << i + 1 << ") " << session_apply[i].nickname()
+                  << " —————— " << session_apply[i].email() << std::endl;
+      }
+      std::cout << Tail;
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 处理入群申请                   |\n"
+                << "|                   (2) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作\n";
+      std::cout << Tail;
+    }
+    std::cin >> flag;
+    switch (flag) {
+      case 1:
+        SovelGroupApply(num);
+        return;
+      case 2:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << Tail << std::endl;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        break;
+      }
+    }
+  }
+}
+
+void PrintMember() {
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow;
+    for (int i = 0; i < member_list.size(); ++i) {
+      std::cout << "(" << i + 1 << ")";
+      if (member_list[i].type() == owner) {
+        std::cout << "群 主：";
+      } else if (member_list[i].type() == admin) {
+        std::cout << "管理员：";
+      } else {
+        std::cout << "成 员：";
+      }
+      std::cout << member_list[i].name() << std::endl;
+    }
+    std::cout << Tail << std::endl;
+  }
+}
+
+void GetMemberList(const int& num) {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GetMemberListReqType);
+  req.mutable_get_member_list_req()->set_user_id(uid);
+  req.mutable_get_member_list_req()->set_session_id(
+      group_list[num - 1].session_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void SetAdmin(const int& num) {
+  GetMemberList(num);
+  if (member_list[0].user_id() != uid) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "你不是群主，不能进行该操作\n" << Tail;
+    }
+    return;
+  }
+  PrintMember();
+  int flag = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要设为管理员的群员编号\n" << Tail;
+  }
+  while (!(std::cin >> flag) || flag <= 1 || flag > member_list.size()) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Red << "不存在编号为此的群员，请重新输入\n" << Tail;
+  }
+  if (member_list[flag - 1].type() == admin) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "此群员已经是管理员\n" << Tail;
+    }
+    return;
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::SetGroupAdminReqType);
+  req.mutable_set_group_admin_req()->set_user_id(uid);
+  req.mutable_set_group_admin_req()->set_session_id(
+      group_list[num - 1].session_id());
+  req.mutable_set_group_admin_req()->set_peer_id(
+      member_list[flag - 1].user_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void CancelAdmin(const int& num) {
+  GetMemberList(num);
+  if (member_list[0].user_id() != uid) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "你不是群主，不能进行该操作\n" << Tail;
+    }
+    return;
+  }
+  PrintMember();
+  int flag = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要解除管理员的群员编号\n" << Tail;
+  }
+  while (!(std::cin >> flag) || flag <= 1 || flag > member_list.size()) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Red << "不存在编号为此的群员，请重新输入\n" << Tail;
+  }
+  if (member_list[flag - 1].type() != admin) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "此群员不是管理员\n" << Tail;
+    }
+    return;
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::CancelGroupAdminReqType);
+  req.mutable_set_group_admin_req()->set_user_id(uid);
+  req.mutable_set_group_admin_req()->set_session_id(
+      group_list[num - 1].session_id());
+  req.mutable_set_group_admin_req()->set_peer_id(
+      member_list[flag - 1].user_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void ToGroup() {
+  int flag = 0;
+  int i = 0;
+  while (true) {
+    GetGroupList();
+    if (!groupsuccess) {
+      return;
+    }
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Cyan << "请输入你要进行操作的对象编号\n" << Tail;
+    }
+    while (!(std::cin >> i) || i <= 0 || i > group_list.size()) {
+      std::cin.clear();  // 清除错误标志位
+      std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                      '\n');  // 丢弃错误输入
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "请输入有效的群聊编号" << Tail << std::endl;
+      }
+    }
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 发送消息                       |\n"
+                << "|                   (2) 发送文件                       |\n"
+                << "|                   (3) 下载文件                       |\n"
+                << "|                   (4) 邀请好友                       |\n"
+                << "|                   (5) 退出群聊                       |\n"
+                << "|                   (6) 清除成员                       |\n"
+                << "|                   (7) 设置管理员                     |\n"
+                << "|                   (8) 解除管理员                     |\n"
+                << "|                   (9) 获取历史消息                   |\n"
+                << "|                   (10) 查看群聊成员                  |\n"
+                << "|                   (11) 查看入群申请                  |\n"
+                << "|                   (12) 解散群聊                      |\n"
+                << "|                   (13) 返回上级                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作:\n";
+      std::cout << Tail;
+    }
+    std::cin >> flag;
+    switch (flag) {
+      case 1:
+
+        return;
+      case 2:
+
+        return;
+      case 3:
+
+        return;
+      case 4:
+
+        return;
+      case 5:
+
+        return;
+      case 6:
+
+        return;
+      case 7:
+        SetAdmin(i);
+        return;
+      case 8:
+
+        return;
+      case 9:
+        return;
+      case 10:
+        GetMemberList(i);
+        PrintMember();
+        return;
+      case 11:
+        GetSessionApply(i);
+        return;
+      case 12:
+        return;
+      case 13:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << "无效的操作" << std::endl;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        break;
+      }
+    }
+  }
+}
+
+void Group() {
+  int flag = 0;
+  while (true) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Cyan;
+      std::cout << " ______________________________________________________\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                   (1) 查看群聊列表                   |\n"
+                << "|                   (2) 创建群聊                       |\n"
+                << "|                   (3) 选择群聊                       |\n"
+                << "|                   (4) 加入群聊                       |\n"
+                << "|                   (5) 返回上级                       |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << "|                                                      |\n"
+                << " ——————————————————————————————————————————————————————\n"
+                << Tail;
+      std::cout << Yellow << "请输入您要进行的操作:\n";
+      std::cout << Tail;
+    }
+    std::cin >> flag;
+    switch (flag) {
+      case 1:
+        GetGroupList();
+        break;
+      case 2:
+        CreateGroup();
+        break;
+      case 3:
+        ToGroup();
+        break;
+      case 4:
+        UserAddGroup();
+        break;
+      case 5:
+        return;
+      default: {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "无效的操作" << std::endl << Tail;
+        }
+        std::cin.clear();  // 清除错误标志位
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        break;
+      }
+    }
+  }
+}
+
 void Menu() {
   int flag = 0;
   while (true) {
@@ -1380,6 +2361,7 @@ void Menu() {
         Friend();
         break;
       case 2:
+        Group();
         break;
       case 3:
         about();
