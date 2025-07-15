@@ -5,18 +5,19 @@
 #include <string>
 
 namespace Xianwei {
-enum group_level { Single,Owner, Admin, Person };
+enum group_level { Single, Owner, Admin, Person };
 #pragma db object table("chat_session_member")
 class ChatSessionMember {
  public:
   ChatSessionMember() {}
-  ChatSessionMember(const std::string& session_id, const std::string& user_id)
-      : _session_id(session_id), _user_id(user_id) {}
+  ChatSessionMember(const std::string& session_id,
+                    const std::string& user_id,
+                    const group_level& level)
+      : _session_id(session_id), _user_id(user_id), _level(level) {}
 
   std::string SessionId() { return _session_id; }
   void SetSessionId(const std::string& session_id) { _session_id = session_id; }
 
-  
   std::string UserId() { return _user_id; }
   void SetUserId(const std::string& user_id) { _user_id = user_id; }
 
