@@ -27,7 +27,7 @@ endforeach()
 
 
 set(odb_path ${CMAKE_CURRENT_SOURCE_DIR}/../odb)
-set(odb_files chat_session_member.hxx chat_session.hxx friend_apply.hxx message.hxx relation.hxx user.hxx)
+set(odb_files chat_session_member.hxx chat_session.hxx friend_apply.hxx message.hxx relation.hxx user.hxx file.hxx session_apply.hxx)
 set(odb_srcs "")
 foreach(odb_file ${odb_files})
   string(REPLACE ".hxx" "-odb.hxx" odb_hxx ${odb_file})
