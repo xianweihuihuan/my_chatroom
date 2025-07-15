@@ -45,31 +45,6 @@ class Message {
   }
   void SetContent(const std::string& content) { _content = content; }
 
-  std::string FileId() {
-    if (!_file_id) {
-      return std::string();
-    }
-    return *_file_id;
-  }
-  void SetFileId(const std::string& fid) { _file_id = fid; }
-
-  std::string FileName() {
-    if (!_file_name) {
-      return std::string();
-    }
-    return *_file_name;
-  }
-  void SetFileName(const std::string& fname) { _file_name = fname; }
-
-
-  unsigned int FileSize(){
-    if(!_file_size){
-      return 0;
-    }
-    return *_file_size;
-  }
-  void SetFileSize(const unsigned int& fsz) { _file_size = fsz; }
-
  private:
   friend class odb::access;
 #pragma db id auto
@@ -84,11 +59,6 @@ class Message {
 #pragma db type("TIMESTAMP")
   boost::posix_time::ptime _create_time;
   odb::nullable<std::string> _content;
-#pragma db type("varchar(64)")
-  odb::nullable<std::string> _file_id;
-#pragma db type("varchar(128)") index
-  odb::nullable<std::string> _file_name;
-  odb::nullable<unsigned int> _file_size;
 };
 }  // namespace Xianwei
    
