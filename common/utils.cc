@@ -3,6 +3,11 @@
 namespace Xianwei {
 std::string uuid() {
   std::stringstream ss;
+  auto now = std::chrono::system_clock::now();
+  auto duration = now.time_since_epoch();
+  auto millis =
+      std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    
   std::random_device rd;
   std::mt19937 generator(rd());
   std::uniform_int_distribution<int> distribution(0, 255);

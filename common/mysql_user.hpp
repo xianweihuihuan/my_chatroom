@@ -33,6 +33,19 @@ class UserTable {
     return true;
   }
 
+  bool Remove(const std::string& uid){
+    try {
+      typedef odb::query<User> query;
+      odb::transaction trans(db_->begin());
+      db_->erase_query<User>(query::user_id == uid);
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("删除用户{}失败：{}", uid, e.what());
+      return false;
+    }
+    return true;
+  }
+
   std::shared_ptr<User> Select_by_nickname(const std::string& name) {
     std::shared_ptr<User> res;
     try {

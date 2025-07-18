@@ -64,14 +64,42 @@ class FileTable {
     return flag;
   }
 
-  
+  std::vector<std::string> AllFileID(const std::string& sid) {
+    std::vector<std::string> ret;
+    try {
+      odb::transaction trans(db_->begin());
+      typedef odb::query<File> query;
+      typedef odb::result<File> result;
+      result r(db_->query<File>(query::session_id == sid));
+      for (auto id : r) {
+        ret.emplace_back(id.FileId());
+      }
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取文件消息失败：{}", e.what());
+      return std::vector<std::string>();
+    }
+    return ret;
+  }
+
+  bool RemoveAll(const std::string& sid) {
+    try {
+      odb::transaction trans(db_->begin());
+      typedef odb::query<File> query;
+      db_->erase_query<File>(query::session_id == sid);
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("删除文件信息失败：{}", e.what());
+      return false;
+    }
+    return true;
+  }
 
   bool Remove(const std::string& uid, const std::string& sid) {
     try {
       odb::transaction trans(db_->begin());
       typedef odb::query<File> query;
-      db_->erase_query<File>(query::user_id == uid &&
-                                 query::session_id == sid);
+      db_->erase_query<File>(query::user_id == uid && query::session_id == sid);
       trans.commit();
     } catch (const std::exception& e) {
       LOG_ERROR("删除文件信息{}-{}失败：{}", uid, sid, e.what());

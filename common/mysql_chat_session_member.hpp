@@ -38,7 +38,7 @@ class ChatSessionMemberTable {
     return true;
   }
 
-  bool Remove(ChatSessionMember& csm) {
+  bool Remove(const ChatSessionMember& csm) {
     try {
       odb::transaction trans(_db->begin());
       typedef odb::query<ChatSessionMember> query;

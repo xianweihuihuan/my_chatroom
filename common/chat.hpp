@@ -3,15 +3,34 @@
 #include "TcpServer.h"
 #include "chat.pb.h"
 #include "conn.hpp"
+#include "file.pb.h"
 
 namespace Xianwei {
 
 Conn connle;
 
+std::shared_ptr<MessageCache> cache;
+
+void SendToClient(const PtrConnection& conn, const std::string& msg) {
+  std::string body = std::to_string(msg.size()) + "\r\n" + msg;
+  conn->Send(body.c_str(), body.size());
+}
+
 void Onclose(const PtrConnection& conn) {
   std::string uid;
   uid = connle.Uid(conn);
   if (!uid.empty()) {
+    auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+    auto friends = conn->GetOwner()->GetRelationTable()->Friends(uid);
+    ClientMessage no;
+    no.set_type(ClientMessageType::FriendOffNoticeType);
+    no.mutable_friend_off_notice()->set_name(user->Nikename());
+    for (auto& n : friends) {
+      auto pconn = connle.Connection(n);
+      if (pconn) {
+        SendToClient(pconn, no.SerializeAsString());
+      }
+    }
     conn->GetOwner()->GetStatus()->Remove(uid);
   }
   connle.Remove(conn);
@@ -21,11 +40,6 @@ bool Check_email(const std::string& address) {
   std::regex reg(R"(^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$)");
   std::smatch mat;
   return std::regex_match(address, mat, reg);
-}
-
-void SendToClient(const PtrConnection& conn, const std::string& msg) {
-  std::string body = std::to_string(msg.size()) + "\r\n" + msg;
-  conn->Send(body.c_str(), body.size());
 }
 
 void SendVcode(const PtrConnection& conn, const EmailVerifyCodeReq& req);
@@ -62,6 +76,18 @@ void GetMemberList(const PtrConnection& conn, const GetMemberListReq& req);
 void SetGroupAdmin(const PtrConnection& conn, const SetGroupAdminReq& req);
 void CancelGroupAdmin(const PtrConnection& conn,
                       const CancelGroupAdminReq& req);
+void GroupAddFriend(const PtrConnection& conn, const GroupAddFriendReq& req);
+void GroupDelFriend(const PtrConnection& conn, const GroupDelMemberReq& req);
+void OwnerCancelGroup(const PtrConnection& conn,
+                      const OwnerCancelGroupReq& req);
+void MemberExitGroup(const PtrConnection& conn, const MemberExitGroupReq& req);
+void GroupSendMessage(const PtrConnection& conn,
+                      const GroupSendMessageReq& req);
+void GroupSendFile(const PtrConnection& conn, const GroupSendFileReq& req);
+void GroupGetFile(const PtrConnection& conn, const GroupGetFileReq& req);
+void GroupHistoryMessage(const PtrConnection& conn,
+                         const GroupHistoryMessageReq& req);
+void UserDelSelf(const PtrConnection& conn, const UserDelSelfReq& req);
 
 void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
   switch (msg.type()) {
@@ -175,9 +201,50 @@ void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
       break;
     case ServerMessageType::SetGroupAdminReqType:
       LOG_DEBUG("收到用户设置管理员的请求");
+      SetGroupAdmin(conn, msg.set_group_admin_req());
       break;
     case ServerMessageType::CancelGroupAdminReqType:
       LOG_DEBUG("收到用户取消管理员的请求");
+      CancelGroupAdmin(conn, msg.cancel_group_admin_req());
+      break;
+    case ServerMessageType::GroupAddFriendReqType:
+      LOG_DEBUG("收到用户邀请好友进群的请求");
+      GroupAddFriend(conn, msg.group_add_friend_req());
+      break;
+    case ServerMessageType::GroupDelMemberReqType:
+      LOG_DEBUG("收到用户踢出群员的请求");
+      GroupDelFriend(conn, msg.group_del_member_req());
+      break;
+    case ServerMessageType::OwnerCancelGroupReqType:
+      LOG_DEBUG("收到用户解散群聊的请求");
+      OwnerCancelGroup(conn, msg.owner_cancel_group_req());
+      break;
+    case ServerMessageType::MemberExitGroupReqType:
+      LOG_DEBUG("收到用户退出群聊的请求");
+      MemberExitGroup(conn, msg.member_exit_group_req());
+      break;
+    case ServerMessageType::GroupSendMessageReqType:
+      LOG_DEBUG("收到用户发送群聊信息的请求");
+      GroupSendMessage(conn, msg.group_send_message_req());
+      break;
+    case ServerMessageType::GroupSendFileReqType:
+      LOG_DEBUG("收到用户上传群聊文件的请求");
+      GroupSendFile(conn, msg.group_send_file_req());
+      break;
+    case ServerMessageType::GroupGetFileReqType:
+      LOG_DEBUG("收到用户下载群文件的请求");
+      GroupGetFile(conn, msg.group_get_file_req());
+      break;
+    case ServerMessageType::GroupHistoryMessageReqType:
+      LOG_DEBUG("收到用户获取群聊历史消息的请求");
+      GroupHistoryMessage(conn, msg.group_history_message_req());
+      break;
+    case ServerMessageType::UserDelSelfReqType:
+      LOG_DEBUG("收到用户注销账号的请求");
+      UserDelSelf(conn, msg.user_del_self_req());
+      break;
+    default:
+      LOG_DEBUG("连接保活");
       break;
   }
 }
@@ -802,6 +869,11 @@ void GetFriendList(const PtrConnection& conn, const GetFriendListReq& req) {
       info->set_user_id(user->UserId());
       info->set_nickname(user->Nikename());
       info->set_email(user->Email());
+      if (conn->GetOwner()->GetStatus()->Exists(n)) {
+        info->set_iflogin(true);
+      } else {
+        info->set_iflogin(false);
+      }
     }
   }
   rsp.mutable_get_friend_list_rsp()->set_success(true);
@@ -1014,11 +1086,7 @@ void FriendSendMessage(const PtrConnection& conn,
   Message msg(uuid(), uid, sid, req.message().message_type() + 1,
               boost::posix_time::second_clock::local_time());
   msg.SetContent(req.message().body());
-  if (!conn->GetOwner()->GetMessageTable()->Insert(msg)) {
-    LOG_ERROR("Mysql消息持久化失败");
-    errfunc("消息成功发出，但Mysql消息持久化失败");
-    return SendToClient(conn, rsp.SerializeAsString());
-  }
+  cache->Append(msg);
   rsp.mutable_friend_send_message_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
 }
@@ -1046,6 +1114,27 @@ void DeleteFriend(const PtrConnection& conn, const DeleteFriendReq& req) {
   }
   ChatSessionMember s1(sid, uid, Single);
   ChatSessionMember s2(sid, pid, Single);
+  if (!conn->GetOwner()->GetMessageTable()->Remove(sid)) {
+    LOG_ERROR("删除会话历史消息失败");
+    errfunc("删除会话历史消息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  std::thread del_file([&conn, &sid]() {
+    Socket df;
+    df.CreateClient(8085, "127.0.0.1");
+    FileServer req;
+    req.set_type(FileServerType::FileDelReqType);
+    auto files = conn->GetOwner()->GetFileTable()->AllFileID(sid);
+    for (auto& id : files) {
+      req.mutable_file_del_req()->add_file_id(id);
+    }
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    df.Send(body.c_str(), body.size());
+    df.Close();
+    conn->GetOwner()->GetFileTable()->RemoveAll(sid);
+  });
+  del_file.detach();
   bool ret = conn->GetOwner()->GetChatSessionMemberTable()->Remove(s1);
   if (!ret) {
     LOG_ERROR("删除会话成员失败");
@@ -1058,14 +1147,14 @@ void DeleteFriend(const PtrConnection& conn, const DeleteFriendReq& req) {
     errfunc("删除会话成员失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
+  if (!conn->GetOwner()->GetChatSessionTable()->Remove(sid)) {
+    LOG_ERROR("删除会话信息失败");
+    errfunc("删除会话信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
   if (!conn->GetOwner()->GetRelationTable()->Remove(uid, pid)) {
     LOG_ERROR("Mysql删除好友关系失败");
     errfunc("Mysql删除好友关系失败");
-    return SendToClient(conn, rsp.SerializeAsString());
-  }
-  if (!conn->GetOwner()->GetMessageTable()->Remove(sid)) {
-    LOG_ERROR("删除会话历史消息失败");
-    errfunc("删除会话历史消息失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   rsp.mutable_delete_friend_rsp()->set_success(true);
@@ -1095,6 +1184,7 @@ void FriendHistoryMessage(const PtrConnection& conn,
     errfunc("未找到会话信息");
     return SendToClient(conn, rsp.SerializeAsString());
   }
+  cache->Flush();
   auto res = conn->GetOwner()->GetMessageTable()->Recent(sid, sz);
   if (res.empty()) {
     LOG_ERROR("无历史消息记录或Mysql查询失败");
@@ -1108,8 +1198,9 @@ void FriendHistoryMessage(const PtrConnection& conn,
     errfunc("获取用户信息失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  for (auto& n : res) {
+  for (int i = 0; i < res.size(); ++i) {
     auto me = rsp.mutable_friend_history_message_rsp()->add_message();
+    auto n = res[i];
     if (n.UserId() == uid) {
       me->set_friend_name(user->Nikename());
     } else if (n.UserId() == pid) {
@@ -1289,7 +1380,7 @@ void UserAddGroup(const PtrConnection& conn, const UserAddGroupReq& req) {
   std::string uid = req.user_id();
   std::string sname = req.session_name();
   auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
-  if(!user){
+  if (!user) {
     LOG_ERROR("获取个人信息失败");
     errfunc("获取个人信息失败");
     return SendToClient(conn, rsp.SerializeAsString());
@@ -1310,7 +1401,7 @@ void UserAddGroup(const PtrConnection& conn, const UserAddGroupReq& req) {
     errfunc("你已在群聊中了");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(conn->GetOwner()->GetSessionApplyTable()->Exists(sid, uid)){
+  if (conn->GetOwner()->GetSessionApplyTable()->Exists(sid, uid)) {
     LOG_ERROR("用户已经发送过入群申请了");
     errfunc("你已经发送过入群申请了");
     return SendToClient(conn, rsp.SerializeAsString());
@@ -1327,9 +1418,9 @@ void UserAddGroup(const PtrConnection& conn, const UserAddGroupReq& req) {
   no.mutable_group_apply_notice()->set_session_name(sname);
   no.mutable_group_apply_notice()->set_user_name(user->Nikename());
   for (auto& n : mem) {
-    if(n.Level() == group_level::Owner || n.Level() == group_level::Admin){
+    if (n.Level() == group_level::Owner || n.Level() == group_level::Admin) {
       auto tmpconn = connle.Connection(n.UserId());
-      if(tmpconn){
+      if (tmpconn) {
         SendToClient(tmpconn, no.SerializeAsString());
       }
     }
@@ -1389,7 +1480,7 @@ void GetSessionApply(const PtrConnection& conn, const GetSessionApplyReq& req) {
   SendToClient(conn, rsp.SerializePartialAsString());
 }
 
-void SovelGroupApply(const PtrConnection& conn, const SovelGroupApplyReq& req){
+void SovelGroupApply(const PtrConnection& conn, const SovelGroupApplyReq& req) {
   ClientMessage rsp;
   rsp.set_type(ClientMessageType::SovelGroupApplyRspType);
   auto errfunc = [&rsp](const std::string& msg) {
@@ -1406,30 +1497,30 @@ void SovelGroupApply(const PtrConnection& conn, const SovelGroupApplyReq& req){
     errfunc("此群聊已经不存在");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid,uid)){
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
     LOG_ERROR("这个用户不是群聊的成员");
     errfunc("你不是群聊的成员");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   auto tmu = conn->GetOwner()->GetChatSessionMemberTable()->Select(sid, uid);
-  if(!tmu){
+  if (!tmu) {
     LOG_ERROR("Mysql查询个人信息失败");
     errfunc("Mysql查询个人信息失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(tmu->Level() == Person){
+  if (tmu->Level() == Person) {
     LOG_ERROR("此人无权处理入群申请");
     errfunc("你无权处理入群申请");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(!conn->GetOwner()->GetSessionApplyTable()->Remove(sid, pid)){
+  if (!conn->GetOwner()->GetSessionApplyTable()->Remove(sid, pid)) {
     LOG_ERROR("Mysql删除入群申请事件失败");
     errfunc("Mysql删除入群申请事件失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   if (req.agree()) {
     ChatSessionMember csm(sid, pid, Person);
-    if(!conn->GetOwner()->GetChatSessionMemberTable()->Append(csm)){
+    if (!conn->GetOwner()->GetChatSessionMemberTable()->Append(csm)) {
       LOG_ERROR("Mysql新增会话成员信息失败");
       errfunc("Mysql新增会话成员信息失败");
       return SendToClient(conn, rsp.SerializeAsString());
@@ -1439,7 +1530,7 @@ void SovelGroupApply(const PtrConnection& conn, const SovelGroupApplyReq& req){
   SendToClient(conn, rsp.SerializeAsString());
 }
 
-void GetMemberList(const PtrConnection& conn, const GetMemberListReq& req){
+void GetMemberList(const PtrConnection& conn, const GetMemberListReq& req) {
   ClientMessage rsp;
   rsp.set_type(ClientMessageType::GetMemberListRspType);
   auto errfunc = [&rsp](const std::string& msg) {
@@ -1455,21 +1546,21 @@ void GetMemberList(const PtrConnection& conn, const GetMemberListReq& req){
     errfunc("此群聊已经不存在");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid,uid)){
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
     LOG_ERROR("这个用户不是群聊的成员");
     errfunc("你不是群聊的成员");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   auto mem = conn->GetOwner()->GetChatSessionMemberTable()->Members(sid);
-  for(auto& n : mem){
+  for (auto& n : mem) {
     auto info = rsp.mutable_get_member_list_rsp()->add_member_info();
     auto tmpu = conn->GetOwner()->GetUserTable()->Select_by_uid(n.UserId());
-    if(tmpu){
-      if(n.Level() == Owner){
+    if (tmpu) {
+      if (n.Level() == Owner) {
         info->set_type(owner);
-      }else if(n.Level() == Admin){
+      } else if (n.Level() == Admin) {
         info->set_type(admin);
-      }else{
+      } else {
         info->set_type(person);
       }
       info->set_user_id(tmpu->UserId());
@@ -1480,7 +1571,7 @@ void GetMemberList(const PtrConnection& conn, const GetMemberListReq& req){
   SendToClient(conn, rsp.SerializeAsString());
 }
 
-void SetGroupAdmin(const PtrConnection& conn, const SetGroupAdminReq& req){
+void SetGroupAdmin(const PtrConnection& conn, const SetGroupAdminReq& req) {
   ClientMessage rsp;
   rsp.set_type(ClientMessageType::SetGroupAdminRspType);
   auto errfunc = [&rsp](const std::string& msg) {
@@ -1497,19 +1588,19 @@ void SetGroupAdmin(const PtrConnection& conn, const SetGroupAdminReq& req){
     errfunc("此群聊已经不存在");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid,pid)){
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, pid)) {
     LOG_ERROR("此人已经不在群聊或Mysql查询失败");
     errfunc("此人已经不在群聊或Mysql查询失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   auto pu = conn->GetOwner()->GetChatSessionMemberTable()->Select(sid, pid);
-  if(!pu){
+  if (!pu) {
     LOG_ERROR("获取对应群员的信息失败");
     errfunc("获取对应群员的信息失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   pu->SetLevel(Admin);
-  if(!conn->GetOwner()->GetChatSessionMemberTable()->Updata(pu)){
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Updata(pu)) {
     LOG_ERROR("更新对应群聊成员信息时失败");
     errfunc("更新对应群聊成员信息时失败");
     return SendToClient(conn, rsp.SerializeAsString());
@@ -1518,9 +1609,10 @@ void SetGroupAdmin(const PtrConnection& conn, const SetGroupAdminReq& req){
   SendToClient(conn, rsp.SerializeAsString());
 }
 
-void CancelGroupAdmin(const PtrConnection& conn, const CancelGroupAdminReq& req){
+void CancelGroupAdmin(const PtrConnection& conn,
+                      const CancelGroupAdminReq& req) {
   ClientMessage rsp;
-  rsp.set_type(ClientMessageType::SetGroupAdminRspType);
+  rsp.set_type(ClientMessageType::CancelGroupAdminRspType);
   auto errfunc = [&rsp](const std::string& msg) {
     rsp.mutable_cancel_group_admin_rsp()->set_errmsg(msg);
     rsp.mutable_cancel_group_admin_rsp()->set_success(false);
@@ -1535,19 +1627,19 @@ void CancelGroupAdmin(const PtrConnection& conn, const CancelGroupAdminReq& req)
     errfunc("此群聊已经不存在");
     return SendToClient(conn, rsp.SerializeAsString());
   }
-  if(!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid,pid)){
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, pid)) {
     LOG_ERROR("此人已经不在群聊或Mysql查询失败");
     errfunc("此人已经不在群聊或Mysql查询失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   auto pu = conn->GetOwner()->GetChatSessionMemberTable()->Select(sid, pid);
-  if(!pu){
+  if (!pu) {
     LOG_ERROR("获取对应群员的信息失败");
     errfunc("获取对应群员的信息失败");
     return SendToClient(conn, rsp.SerializeAsString());
   }
   pu->SetLevel(Person);
-  if(!conn->GetOwner()->GetChatSessionMemberTable()->Updata(pu)){
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Updata(pu)) {
     LOG_ERROR("更新对应群聊成员信息时失败");
     errfunc("更新对应群聊成员信息时失败");
     return SendToClient(conn, rsp.SerializeAsString());
@@ -1555,5 +1647,513 @@ void CancelGroupAdmin(const PtrConnection& conn, const CancelGroupAdminReq& req)
   rsp.mutable_cancel_group_admin_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
 }
-}  // namespace Xianwei
 
+void GroupAddFriend(const PtrConnection& conn, const GroupAddFriendReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GroupAddFriendRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_group_add_friend_rsp()->set_errmsg(msg);
+    rsp.mutable_group_add_friend_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string pid = req.peer_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户不是群聊的成员");
+    errfunc("你不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, pid)) {
+    LOG_ERROR("此人已经在群聊");
+    errfunc("此人已经在群聊");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(pid);
+  if (!user) {
+    LOG_ERROR("此用户已不存在");
+    errfunc("此用户已不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  ChatSessionMember mem(sid, pid, Person);
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Append(mem)) {
+    LOG_ERROR("新增会话成员信息失败");
+    errfunc("新增会话成员信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_group_add_friend_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void GroupDelFriend(const PtrConnection& conn, const GroupDelMemberReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GroupDelMemberRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_group_del_member_rsp()->set_errmsg(msg);
+    rsp.mutable_group_del_member_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string pid = req.peer_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户不是群聊的成员");
+    errfunc("你不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, pid)) {
+    LOG_ERROR("此人已经不在群聊");
+    errfunc("此人已经不在群聊");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto mem1 = conn->GetOwner()->GetChatSessionMemberTable()->Select(sid, uid);
+  auto mem2 = conn->GetOwner()->GetChatSessionMemberTable()->Select(sid, pid);
+  if (!mem1 || !mem2) {
+    LOG_ERROR("获取会话成员信息失败");
+    errfunc("获取会话成员信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (mem1->Level() == Person) {
+    LOG_ERROR("无权进行踢人操作");
+    errfunc("你无权进行踢人操作");
+    return SendToClient(conn, rsp.SerializeAsString());
+  } else if (mem1->Level() == Admin && mem2->Level() != Person) {
+    LOG_ERROR("只能踢出普通成员");
+    errfunc("权限不足，你只能踢出普通成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Remove(*mem2.get())) {
+    LOG_ERROR("Mysql删除会话成员信息失败");
+    errfunc("Mysql删除会话成员信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_group_del_member_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void OwnerCancelGroup(const PtrConnection& conn,
+                      const OwnerCancelGroupReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::OwnerCancelGroupRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_owner_cancel_group_rsp()->set_errmsg(msg);
+    rsp.mutable_owner_cancel_group_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户不是群聊的成员");
+    errfunc("你不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetMessageTable()->Remove(sid)) {
+    LOG_ERROR("删除会话历史聊天记录失败");
+    errfunc("删除会话历史聊天记录失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  std::thread del_file([&conn, &sid]() {
+    Socket df;
+    df.CreateClient(8085, "127.0.0.1");
+    FileServer req;
+    req.set_type(FileServerType::FileDelReqType);
+    auto files = conn->GetOwner()->GetFileTable()->AllFileID(sid);
+    for (auto& id : files) {
+      req.mutable_file_del_req()->add_file_id(id);
+    }
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    df.Send(body.c_str(), body.size());
+    df.Close();
+    conn->GetOwner()->GetFileTable()->RemoveAll(sid);
+  });
+  del_file.detach();
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->RemoveAll(sid)) {
+    LOG_ERROR("删除所有群聊成员信息失败");
+    errfunc("删除所有群聊成员信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionTable()->Remove(sid)) {
+    LOG_ERROR("删除会话信息失败");
+    errfunc("删除会话信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_owner_cancel_group_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void MemberExitGroup(const PtrConnection& conn, const MemberExitGroupReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::MemberExitGroupRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_member_exit_group_rsp()->set_errmsg(msg);
+    rsp.mutable_member_exit_group_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户已经不是群聊的成员");
+    errfunc("你已经不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto mem = conn->GetOwner()->GetChatSessionMemberTable()->Select(sid, uid);
+  if (!mem) {
+    LOG_ERROR("查询会话成员信息失败");
+    errfunc("查询会话成员信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Remove(*mem.get())) {
+    LOG_ERROR("删除会话成员信息失败");
+    errfunc("删除会话成员信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_member_exit_group_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void GroupSendMessage(const PtrConnection& conn,
+                      const GroupSendMessageReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GroupSendMessageRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_group_send_message_rsp()->set_errmsg(msg);
+    rsp.mutable_group_send_message_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户已经不是群聊的成员");
+    errfunc("你已经不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+  if (!user) {
+    LOG_ERROR("获取个人信息失败");
+    errfunc("获取个人信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  auto mem_list = conn->GetOwner()->GetChatSessionMemberTable()->Members(sid);
+  if (mem_list.empty()) {
+    LOG_ERROR("获取会话成员失败");
+    errfunc("获取会话成员失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  Message msg(uuid(), uid, sid, req.message().message_type() + 1,
+              boost::posix_time::second_clock::local_time());
+  msg.SetContent(req.message().body());
+  cache->Append(msg);
+  ClientMessage no;
+  no.set_type(ClientMessageType::GroupMessageNoticeType);
+  no.mutable_group_message_notice()->set_member_name(user->Nikename());
+  no.mutable_group_message_notice()->set_session_name(session->SessionName());
+  no.mutable_group_message_notice()->set_message_type(
+      req.message().message_type());
+  no.mutable_group_message_notice()->set_body(req.message().body());
+  Json::StreamWriterBuilder wbd;
+  Json::Value test;
+  test["name"] = session->SessionName();
+  test["sender"] = user->Nikename();
+  if (req.message().message_type() == MessageType::string) {
+    test["type"] = 1;
+  } else {
+    test["type"] = 2;
+  }
+  test["body"] = req.message().body();
+  std::string str = Json::writeString(wbd, test);
+  for (auto& n : mem_list) {
+    if (n.UserId() == uid) {
+      continue;
+    }
+    auto pconn = connle.Connection(n.UserId());
+    if (pconn) {
+      SendToClient(pconn, no.SerializeAsString());
+    } else {
+      conn->GetOwner()->GetOfflineMessage()->GroupAppend(n.UserId(), str);
+    }
+  }
+  rsp.mutable_group_send_message_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void GroupSendFile(const PtrConnection& conn, const GroupSendFileReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GroupSendFileRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_group_send_file_rsp()->set_errmsg(msg);
+    rsp.mutable_group_send_file_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户已经不是群聊的成员");
+    errfunc("你已经不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  std::string file_name = req.file_name();
+  std::string file_id;
+  if (conn->GetOwner()->GetFileTable()->Exist(sid, uid, file_name)) {
+    file_id = conn->GetOwner()->GetFileTable()->FileId(sid, uid, file_name);
+    rsp.mutable_group_send_file_rsp()->set_ifexist(true);
+  } else {
+    file_id = uuid();
+    rsp.mutable_group_send_file_rsp()->set_ifexist(false);
+    File f(uid, sid, file_name, file_id);
+    if (!conn->GetOwner()->GetFileTable()->Insert(f)) {
+      LOG_ERROR("Mysql创建文件信息失败");
+      errfunc("Mysql创建文件信息失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+  }
+  rsp.mutable_group_send_file_rsp()->set_file_id(file_id);
+  rsp.mutable_group_send_file_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void GroupGetFile(const PtrConnection& conn, const GroupGetFileReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GroupGetFileRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_group_get_file_rsp()->set_errmsg(msg);
+    rsp.mutable_group_get_file_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户已经不是群聊的成员");
+    errfunc("你已经不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  std::string file_name = req.file_name();
+  std::string sender = req.send_id();
+  if (!conn->GetOwner()->GetFileTable()->Exist(sid, sender, file_name)) {
+    LOG_ERROR("不存在该文件");
+    errfunc("不存在该文件");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  std::string file_id =
+      conn->GetOwner()->GetFileTable()->FileId(sid, sender, file_name);
+  if (file_id.empty()) {
+    LOG_ERROR("获取文件ID失败");
+    errfunc("获取文件ID失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  rsp.mutable_group_get_file_rsp()->set_success(true);
+  rsp.mutable_group_get_file_rsp()->set_file_id(file_id);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void GroupHistoryMessage(const PtrConnection& conn,
+                         const GroupHistoryMessageReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::GroupHistoryMessageRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_group_history_message_rsp()->set_errmsg(msg);
+    rsp.mutable_group_history_message_rsp()->set_success(false);
+    return;
+  };
+  std::string uid = req.user_id();
+  std::string sid = req.session_id();
+  auto session = conn->GetOwner()->GetChatSessionTable()->Select(sid);
+  if (!session) {
+    LOG_ERROR("此群聊已经不存在");
+    errfunc("此群聊已经不存在");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  if (!conn->GetOwner()->GetChatSessionMemberTable()->Exist(sid, uid)) {
+    LOG_ERROR("这个用户已经不是群聊的成员");
+    errfunc("你已经不是群聊的成员");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  int sz = req.message_size();
+  std::unordered_map<std::string, std::string> uid_name;
+  auto mem_list = conn->GetOwner()->GetChatSessionMemberTable()->Members(sid);
+  for (auto& mem : mem_list) {
+    auto info = conn->GetOwner()->GetUserTable()->Select_by_uid(mem.UserId());
+    if (info) {
+      uid_name[mem.UserId()] = info->Nikename();
+    }
+  }
+  cache->Flush();
+  auto res = conn->GetOwner()->GetMessageTable()->Recent(sid, sz);
+  if (res.empty()) {
+    LOG_ERROR("无历史消息记录或Mysql查询失败");
+    errfunc("无历史消息记录或Mysql查询失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  for (int i = 0; i < res.size(); ++i) {
+    auto me = rsp.mutable_group_history_message_rsp()->add_message();
+    auto n = res[i];
+    auto pos = uid_name.find(n.UserId());
+    if (pos != uid_name.end()) {
+      me->set_sender_name(pos->second);
+    } else {
+      me->set_sender_name("未知人员");
+    }
+    if (n.MessageType() == 2) {
+      me->set_message_type(MessageType::string);
+      me->set_body(n.Content());
+    } else if (n.MessageType() == 1) {
+      me->set_message_type(MessageType::file);
+      me->set_body(n.Content());
+    }
+  }
+  rsp.mutable_group_history_message_rsp()->set_success(true);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+
+void UserDelSelf(const PtrConnection& conn, const UserDelSelfReq& req) {
+  ClientMessage rsp;
+  rsp.set_type(ClientMessageType::UserDelSelfRspType);
+  auto errfunc = [&rsp](const std::string& msg) {
+    rsp.mutable_user_del_self_rsp()->set_errmsg(msg);
+    rsp.mutable_user_del_self_rsp()->set_success(false);
+    return;
+  };
+  cache->Flush();
+  std::string uid = req.user_id();
+  std::vector<std::string> file_ids;
+  auto friends = conn->GetOwner()->GetRelationTable()->Friends(uid);
+  for (auto& f : friends) {
+    auto tsid = conn->GetOwner()->GetRelationTable()->SessionId(uid, f);
+    if (tsid.empty()) {
+      LOG_ERROR("Mysql删除数据失败");
+      errfunc("Mysql删除数据失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+    if (!conn->GetOwner()->GetMessageTable()->Remove(tsid)) {
+      LOG_ERROR("Mysql删除数据失败");
+      errfunc("Mysql删除数据失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+    auto files = conn->GetOwner()->GetFileTable()->AllFileID(tsid);
+    for (auto& id : files) {
+      file_ids.emplace_back(id);
+    }
+    if (!conn->GetOwner()->GetFileTable()->RemoveAll(tsid)) {
+      LOG_ERROR("Mysql删除数据失败");
+      errfunc("Mysql删除数据失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+    if (!conn->GetOwner()->GetChatSessionMemberTable()->RemoveAll(tsid)) {
+      LOG_ERROR("Mysql删除数据失败");
+      errfunc("Mysql删除数据失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+    if (!conn->GetOwner()->GetChatSessionTable()->Remove(tsid)) {
+      LOG_ERROR("Mysql删除数据失败");
+      errfunc("Mysql删除数据失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+    conn->GetOwner()->GetRelationTable()->Remove(uid, f);
+  }
+  auto groups = conn->GetOwner()->GetChatSessionTable()->GroupChat(uid);
+  for (auto& g : groups) {
+    auto mem = conn->GetOwner()->GetChatSessionMemberTable()->Select(
+        g.session_id, uid);
+    if (mem) {
+      if (mem->Level() == Owner) {
+        if (!conn->GetOwner()->GetMessageTable()->Remove(g.session_id)) {
+          LOG_ERROR("Mysql删除数据失败");
+          errfunc("Mysql删除数据失败");
+          return SendToClient(conn, rsp.SerializeAsString());
+        }
+        auto files = conn->GetOwner()->GetFileTable()->AllFileID(g.session_id);
+        for (auto& id : files) {
+          file_ids.emplace_back(id);
+        }
+        if (!conn->GetOwner()->GetFileTable()->RemoveAll(g.session_id)) {
+          LOG_ERROR("Mysql删除数据失败");
+          errfunc("Mysql删除数据失败");
+          return SendToClient(conn, rsp.SerializeAsString());
+        }
+        if (!conn->GetOwner()->GetChatSessionMemberTable()->RemoveAll(
+                g.session_id)) {
+          LOG_ERROR("Mysql删除数据失败");
+          errfunc("Mysql删除数据失败");
+          return SendToClient(conn, rsp.SerializeAsString());
+        }
+        if (!conn->GetOwner()->GetChatSessionTable()->Remove(g.session_id)) {
+          LOG_ERROR("Mysql删除数据失败");
+          errfunc("Mysql删除数据失败");
+          return SendToClient(conn, rsp.SerializeAsString());
+        }
+      } else {
+        conn->GetOwner()->GetChatSessionMemberTable()->Remove(*mem);
+      }
+    } else {
+      LOG_ERROR("Mysql删除数据失败");
+      errfunc("Mysql删除数据失败");
+      return SendToClient(conn, rsp.SerializeAsString());
+    }
+  }
+  if (!conn->GetOwner()->GetUserTable()->Remove(uid)) {
+    LOG_ERROR("删除用户信息失败");
+    errfunc("删除用户信息失败");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
+  std::thread del_file([conn, file_ids]() {
+    Socket df;
+    df.CreateClient(8085, "127.0.0.1");
+    FileServer req;
+    req.set_type(FileServerType::FileDelReqType);
+    for (auto& id : file_ids) {
+      req.mutable_file_del_req()->add_file_id(id);
+    }
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    df.Send(body.c_str(), body.size());
+    df.Close();
+  });
+  del_file.detach();
+  rsp.mutable_user_del_self_rsp()->set_success(true);
+  conn->GetOwner()->GetStatus()->Remove(uid);
+  connle.Remove(conn);
+  SendToClient(conn, rsp.SerializeAsString());
+}
+}  // namespace Xianwei

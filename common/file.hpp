@@ -141,6 +141,12 @@ void OnMessage(const PtrConnection& conn, Buffer* buf) {
       LOG_ERROR("文件传输完毕");
       close(file_fd);
       break;
+    }else if(msg.type() == FileServerType::FileDelReqType){
+      auto req = msg.file_del_req();
+      for (int i = 0; i < req.file_id_size();++i){
+        auto file = path + req.file_id(i);
+        std::remove(file.c_str());
+      }
     }
   }
 }

@@ -42,7 +42,7 @@ class MessageTable {
       typedef odb::result<Message> result;
       std::stringstream ss;
       ss << "session_id='" << sid << "'";
-      ss << "order by create_time desc limit " << count;
+      ss << "order by id desc limit " << count;
       result r(db_->query<Message>(ss.str()));
       for (const auto& re : r) {
         res.emplace_back(re);
@@ -77,6 +77,23 @@ class MessageTable {
                 boost::posix_time::to_simple_string(etime), e.what());
     }
     return res;
+  }
+
+  bool InsertBatch(std::vector<Message>& msgs) {
+    if (msgs.empty()) {
+      return true;
+    }
+    try {
+      odb::transaction trans(db_->begin());
+      for (auto& m : msgs) {
+        db_->persist(m);
+      }
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("批量新增消息失败：{}", e.what());
+      return false;
+    }
+    return true;
   }
 
  private:
