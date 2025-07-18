@@ -24,12 +24,21 @@ DEFINE_string(ver_pswd, "QPtgXwngD2zjgFGU", "邮箱验证密钥");
 DEFINE_string(scrt, "../../key/server.crt", "SSL服务端证书");
 DEFINE_string(skey, "../../key/server.key", "SSL服务端密钥");
 
-int main(int argc,char* argv[]) {
+int main(int argc, char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  Xianwei::TcpServer sp(8080,true,FLAGS_scrt,FLAGS_skey);
+  Xianwei::TcpServer sp(8080, true, FLAGS_scrt, FLAGS_skey);
   sp.SetMessageCallback(Xianwei::OnMessage);
   sp.SetClosedCallback(Xianwei::Onclose);
+  auto cache_mysql = Xianwei::ODBFactory::Create(
+      FLAGS_mysql_user, FLAGS_mysql_pswd, FLAGS_mysql_host, FLAGS_mysql_db,
+      FLAGS_mysql_cset, FLAGS_mysql_port, FLAGS_mysql_pool_count);
+  Xianwei::MessageTable::ptr tt =
+      std::make_shared<Xianwei::MessageTable>(cache_mysql);
+  auto re = Xianwei::RedisClientFactory::Create(
+      FLAGS_redis_host, FLAGS_redis_port, FLAGS_redis_db,
+      FLAGS_redis_keepalive);
+  Xianwei::cache = std::make_shared<Xianwei::MessageCache>(re, tt);
   sp.SetMysqlMessage(FLAGS_mysql_user, FLAGS_mysql_pswd, FLAGS_mysql_host,
                      FLAGS_mysql_db, FLAGS_mysql_cset, FLAGS_mysql_port,
                      FLAGS_mysql_pool_count);
@@ -37,6 +46,14 @@ int main(int argc,char* argv[]) {
                      FLAGS_redis_keepalive);
   sp.SetVerMessage(FLAGS_ver_username, FLAGS_ver_pswd);
   sp.SetThreadCount(10);
+  sp.EnableInactiveRelease(30);
+  std::thread flush([]() {
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+      Xianwei::cache->Flush();
+    }
+  });
+  flush.detach();
   sp.Start();
 
   return 0;

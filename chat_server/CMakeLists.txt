@@ -1,14 +1,12 @@
 cmake_minimum_required(VERSION 3.1.3)
 project(chatroom)
 
-set(CMAKE_BUILD_TYPE DEBUG)
-
 
 set(target "chat_server")
 
 set(proto_srcs "")
 set(proto_path ${CMAKE_CURRENT_SOURCE_DIR}/../proto)
-set(proto_files chat.proto)
+set(proto_files chat.proto file.proto)
 foreach(proto_file ${proto_files})
   string(REPLACE ".proto" ".pb.cc" proto_cc ${proto_file})
   string(REPLACE ".proto" ".pb.h" proto_h ${proto_file})
