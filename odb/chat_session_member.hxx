@@ -15,13 +15,13 @@ class ChatSessionMember {
                     const group_level& level)
       : _session_id(session_id), _user_id(user_id), _level(level) {}
 
-  std::string SessionId() { return _session_id; }
+  std::string SessionId()const  { return _session_id; }
   void SetSessionId(const std::string& session_id) { _session_id = session_id; }
 
-  std::string UserId() { return _user_id; }
+  std::string UserId()const { return _user_id; }
   void SetUserId(const std::string& user_id) { _user_id = user_id; }
 
-  group_level Level() { return _level; }
+  group_level Level()const { return _level; }
   void SetLevel(const group_level& level) { _level = level; }
 
  private:
