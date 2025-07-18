@@ -14,13 +14,14 @@
 #include "Poller.h"
 #include "data_redis.hpp"
 #include "logger.h"
+#include "message_cache.h"
 #include "mysql_apply.hpp"
 #include "mysql_chat_session.hpp"
 #include "mysql_chat_session_member.hpp"
+#include "mysql_file.hpp"
 #include "mysql_message.hpp"
 #include "mysql_relation.hpp"
 #include "mysql_user.hpp"
-#include "mysql_file.hpp"
 #include "verification_code_send.h"
 
 namespace Xianwei {
@@ -172,6 +173,7 @@ class EventLoop {
   Status::ptr GetStatus() { return redis_status_; }
   Codes::ptr GetCodes() { return redis_codes_; }
   OfflineMessage::ptr GetOfflineMessage() { return redis_message_; }
+  MessageCache::ptr GetMessageCache() { return message_cache_; }
 
   VerificationCodeSend::ptr GetVerClient() { return ver_client_; }
 
@@ -184,6 +186,8 @@ class EventLoop {
 
   // 向 eventfd 写入数据（唤醒阻塞中的 epoll）
   void WakeUpEventFd();
+
+  void ScheduleFlush();
 
   std::thread::id thread_id_;               // 创建该 EventLoop 的线程 ID
   int event_fd_;                            // eventfd，用于跨线程唤醒
@@ -210,6 +214,9 @@ class EventLoop {
   Codes::ptr redis_codes_;
   OfflineMessage::ptr redis_message_;
 
+  MessageCache::ptr message_cache_;
+  uint64_t flush_timer_id_;
+  uint32_t flush_interval_;
 };
 
 }  // namespace Xianwei

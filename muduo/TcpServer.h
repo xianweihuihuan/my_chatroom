@@ -1,7 +1,7 @@
 #pragma once
 
-#include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <functional>
 #include <unordered_map>
 #include "Acceptor.h"
@@ -21,9 +21,13 @@ class TcpServer {
   using AnyEventCallback = std::function<void(const PtrConnection&)>;
   using Functor = std::function<void()>;
 
-  //explicit TcpServer(int port,const std::string& scrt,const std::string& skey);
+  // explicit TcpServer(int port,const std::string& scrt,const std::string&
+  // skey);
 
-  explicit TcpServer(int port,bool enable_ssl,const std::string& scrt,const std::string& skey);
+  explicit TcpServer(int port,
+                     bool enable_ssl,
+                     const std::string& scrt,
+                     const std::string& skey);
 
   // 设置线程池线程数量
   void SetThreadCount(int count);
@@ -76,6 +80,8 @@ class TcpServer {
 
   // 线程安全移除连接（调度到主循环）
   void RemoveConnection(const PtrConnection& conn);
+
+  void ScheduleFlush(Functor& task,int delay);
 
   uint64_t next_id_;
   int port_;

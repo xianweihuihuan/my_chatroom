@@ -263,17 +263,27 @@ EventLoop::EventLoop(const std::string& mysql_user,
                                                redis_db,
                                                redis_keep_alive)),
       ver_client_(std::make_shared<VerificationCodeSend>(username, key)),
-          user_table_(std::make_shared<UserTable>(mysql_client_)),
-          message_table_(std::make_shared<MessageTable>(mysql_client_)),
-          relation_table_(std::make_shared<RelationTable>(mysql_client_)),
-          friendapply_table_(std::make_shared<FriendApplyTable>(mysql_client_)),
-          csm_table_(std::make_shared<ChatSessionMemberTable>(mysql_client_)),
-          css_table_(std::make_shared<ChatSessionTable>(mysql_client_)),
-          file_table_(std::make_shared<FileTable>(mysql_client_)),
-          session_table_(std::make_shared<SessionApplyTable>(mysql_client_)),
-          redis_codes_(std::make_shared<Codes>(redis_client_)),
-          redis_status_(std::make_shared<Status>(redis_client_)),
-          redis_message_(std::make_shared<OfflineMessage>(redis_client_))
-          {}
+      user_table_(std::make_shared<UserTable>(mysql_client_)),
+      message_table_(std::make_shared<MessageTable>(mysql_client_)),
+      relation_table_(std::make_shared<RelationTable>(mysql_client_)),
+      friendapply_table_(std::make_shared<FriendApplyTable>(mysql_client_)),
+      csm_table_(std::make_shared<ChatSessionMemberTable>(mysql_client_)),
+      css_table_(std::make_shared<ChatSessionTable>(mysql_client_)),
+      file_table_(std::make_shared<FileTable>(mysql_client_)),
+      session_table_(std::make_shared<SessionApplyTable>(mysql_client_)),
+      redis_codes_(std::make_shared<Codes>(redis_client_)),
+      redis_status_(std::make_shared<Status>(redis_client_)),
+      redis_message_(std::make_shared<OfflineMessage>(redis_client_)),
+      message_cache_(
+          std::make_shared<MessageCache>(redis_client_, message_table_)),
+      flush_timer_id_(10000),
+      flush_interval_(5) {
+}
 
+void EventLoop::ScheduleFlush() {
+  TimerAdd(flush_timer_id_, flush_interval_, [this]() {
+    message_cache_->Flush();
+    ScheduleFlush();
+  });
+}
 }  // namespace Xianwei

@@ -194,6 +194,7 @@ void TcpServer::RemoveConnectionInLoop(const PtrConnection& conn) {
 void TcpServer::Start() {
   pool_.Create();
   base_loop_.Start();
+  
 }
 
 void TcpServer::SetMysqlMessage(std::string user,
@@ -231,4 +232,5 @@ void TcpServer::SetVerMessage(const std::string& username,
   ver_key_ = key;
   pool_.SetVerMessage(ver_user_, ver_key_);
 }
+
 }  // namespace Xianwei
