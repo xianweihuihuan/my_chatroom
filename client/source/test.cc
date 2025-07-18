@@ -49,6 +49,15 @@ int main(int argc,char*argv[]) {
   selfefd = eventfd(0, EFD_CLOEXEC);
   friendefd = eventfd(0, EFD_CLOEXEC);
   groupefd = eventfd(0, EFD_CLOEXEC);
+  std::thread heart([]() {
+    while(true){
+      Xianwei::ServerMessage req;
+      req.set_type(Xianwei::ServerMessageType::HeartType);
+      Xianwei::SendToServer(req.SerializeAsString());
+      std::this_thread::sleep_for(std::chrono::seconds(10));
+    }
+  });
+  heart.detach();
   Xianwei::Print();
   std::cout << Yellow << "输入”start“以开始：";
   std::string ifstart;

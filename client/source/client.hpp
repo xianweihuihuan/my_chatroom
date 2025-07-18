@@ -35,6 +35,7 @@ bool friendsuccess;
 bool selfsuccess;
 SSL* ssl;
 bool deletefriend = false;
+bool cancelgroup = false;
 std::string vid;
 std::string vcode;
 std::string uid;
@@ -531,18 +532,19 @@ void HandleMessage(const ClientMessage& msg) {
                     << std::endl;
         }
       }
-      //WakeUpEventFd(friendefd);
+      // WakeUpEventFd(friendefd);
       break;
     case ClientMessageType::FriendMessageNoticeType: {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Yellow;
       printf("[好友][%10s]", msg.friend_message_notice().friend_name().c_str());
       if (msg.friend_message_notice().message_type() == MessageType::file) {
-        printf("[文件]:%s\n", msg.friend_message_notice().body().c_str());
+        printf("[文件]:%s", msg.friend_message_notice().body().c_str());
       } else if (msg.friend_message_notice().message_type() ==
                  MessageType::string) {
-        printf("[消息]:%s\n", msg.friend_message_notice().body().c_str());
+        printf("[消息]:%s", msg.friend_message_notice().body().c_str());
       }
+      std::cout << Tail << std::endl;
     } break;
     case ClientMessageType::DeleteFriendRspType:
       if (msg.delete_friend_rsp().success()) {
@@ -761,12 +763,12 @@ void HandleMessage(const ClientMessage& msg) {
       WakeUpEventFd(groupefd);
       break;
     case ClientMessageType::SetGroupAdminRspType:
-      if(msg.set_group_admin_rsp().success()){
+      if (msg.set_group_admin_rsp().success()) {
         {
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Green << "设置群聊管理员成功\n" << Tail;
         }
-      }else{
+      } else {
         {
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Red << "设置群聊管理员失败，原因："
@@ -776,19 +778,215 @@ void HandleMessage(const ClientMessage& msg) {
       WakeUpEventFd(groupefd);
       break;
     case ClientMessageType::CancelGroupAdminRspType:
-      if(msg.set_group_admin_rsp().success()){
+      if (msg.cancel_group_admin_rsp().success()) {
         {
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Green << "解除群聊管理员成功\n" << Tail;
         }
-      }else{
+      } else {
         {
           std::unique_lock<std::mutex> mtx(iolock);
           std::cout << Red << "设置群聊管理员失败，原因："
-                    << msg.set_group_admin_rsp().errmsg() << Tail << std::endl;
+                    << msg.cancel_group_admin_rsp().errmsg() << Tail
+                    << std::endl;
         }
       }
       WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupAddFriendRspType:
+      if (msg.group_add_friend_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "邀请好友进群成功\n" << Tail;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "邀请好友进群失败，原因："
+                    << msg.group_add_friend_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupDelMemberRspType:
+      if (msg.group_del_member_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "踢出群聊成员成功\n" << Tail;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "踢出群聊成员失败，原因："
+                    << msg.group_del_member_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::OwnerCancelGroupRspType:
+      if (msg.owner_cancel_group_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "解散群聊成功\n" << Tail;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "解散群聊失败，原因："
+                    << msg.owner_cancel_group_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::MemberExitGroupRspType:
+      if (msg.member_exit_group_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "退出群聊成功\n" << Tail;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "退出群聊失败，原因："
+                    << msg.member_exit_group_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupSendMessageRspType:
+      if (msg.group_send_message_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "发送群聊消息成功" << Tail << std::endl;
+        }
+      } else {
+        if (msg.group_send_message_rsp().errmsg() == "此群聊已经不存在" ||
+            msg.group_send_message_rsp().errmsg() == "你已经不是群聊的成员") {
+          cancelgroup = true;
+        }
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "发送群聊消息失败，原因："
+                    << msg.group_send_message_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupMessageNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow;
+      printf("[群聊:%s][%10s]",
+             msg.group_message_notice().session_name().c_str(),
+             msg.group_message_notice().member_name().c_str());
+      if (msg.group_message_notice().message_type() == MessageType::file) {
+        printf("[文件]:%s", msg.group_message_notice().body().c_str());
+      } else if (msg.group_message_notice().message_type() ==
+                 MessageType::string) {
+        printf("[消息]:%s", msg.group_message_notice().body().c_str());
+      }
+      std::cout << Tail << std::endl;
+    } break;
+    case ClientMessageType::GroupSendFileRspType:
+      if (msg.group_send_file_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(sendfileidlock);
+          send_file_id = msg.group_send_file_rsp().file_id();
+          filexist = msg.group_send_file_rsp().ifexist();
+        }
+        groupsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "上传文件失败，原因："
+                    << msg.group_send_file_rsp().errmsg() << Tail << std::endl;
+        }
+        groupsuccess = false;
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupGetFileRspType:
+      if (msg.group_get_file_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(getfilelock);
+          get_file_id = msg.group_get_file_rsp().file_id();
+        }
+        groupsuccess = true;
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "下载文件失败，原因"
+                    << msg.group_get_file_rsp().errmsg() << Tail << std::endl;
+        }
+        groupsuccess = false;
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::GroupHistoryMessageRspType:
+      if (msg.group_history_message_rsp().success()) {
+        {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Green << "获取历史消息成功" << Tail << std::endl;
+            for (int i = 0; i < msg.group_history_message_rsp().message_size();
+                 ++i) {
+              std::cout << Yellow;
+              printf("[群聊：%s][%10s]",
+                     msg.group_history_message_rsp()
+                         .message(i)
+                         .session_name()
+                         .c_str(),
+                     msg.group_history_message_rsp()
+                         .message(i)
+                         .sender_name()
+                         .c_str());
+              if (msg.group_history_message_rsp().message(i).message_type() ==
+                  MessageType::file) {
+                printf(
+                    "[文件]:%s\n",
+                    msg.group_history_message_rsp().message(i).body().c_str());
+              } else if (msg.group_history_message_rsp()
+                             .message(i)
+                             .message_type() == MessageType::string) {
+                printf(
+                    "[消息]:%s\n",
+                    msg.group_history_message_rsp().message(i).body().c_str());
+              }
+            }
+          }
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "获取群聊历史消息失败，原因："
+                    << msg.group_history_message_rsp().errmsg() << Tail
+                    << std::endl;
+        }
+      }
+      WakeUpEventFd(groupefd);
+      break;
+    case ClientMessageType::FriendOffNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "[通知]: 你的好友"
+                << msg.friend_off_notice().name() << "已下线" << Tail
+                << std::endl;
+    } break;
+    case ClientMessageType::UserDelSelfRspType:
+      if (msg.user_del_self_rsp().success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "注销账号成功" << Tail << std::endl;
+        }
+      } else {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "注销账号失败，原因："
+                    << msg.user_del_self_rsp().errmsg() << Tail << std::endl;
+        }
+      }
+      WakeUpEventFd(selfefd);
       break;
   }
 }
@@ -1243,7 +1441,12 @@ void GetFriendList() {
     std::cout << Yellow;
     for (int i = 0; i < friend_list.size(); ++i) {
       std::cout << "(" << i + 1 << ") " << friend_list[i].nickname()
-                << " —————— " << friend_list[i].email() << std::endl;
+                << " —————— " << friend_list[i].email() << " —————— ";
+      if (friend_list[i].iflogin()) {
+        std::cout << "在线" << std::endl;
+      } else {
+        std::cout << "不在线" << std::endl;
+      }
     }
     std::cout << Tail;
   }
@@ -1299,7 +1502,7 @@ void SendString(const int& num) {
     tme->set_message_type(MessageType::string);
     tme->set_body(body);
     SendToServer(req.SerializeAsString());
-    //ReadEventfd(friendefd);
+    // ReadEventfd(friendefd);
     if (deletefriend) {
       return;
     }
@@ -1368,13 +1571,14 @@ void FriendSendFile(const int& num) {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Cyan << "请输入你要上传的文件\n" << Tail;
   }
-  std::cin >> file_name;
+  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+  std::getline(std::cin, file_name);
   while (!std::filesystem::exists(file_name)) {
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "文件不存在，请重新输入\n" << Tail;
     }
-    std::cin >> file_name;
+    std::getline(std::cin, file_name);
   }
   std::filesystem::path p(file_name);
   ServerMessage req;
@@ -1526,7 +1730,6 @@ void FriendSendFile(const int& num) {
     me->set_message_type(MessageType::file);
     me->set_body(p.filename());
     SendToServer(creq.SerializeAsString());
-    ReadEventfd(friendefd);
   });
   send_file.detach();
 }
@@ -1564,7 +1767,8 @@ void FriendGetFile(const int& num) {
   {
     std::cout << Yellow << "请输入你要获取的文件名:\n" << Tail;
   }
-  std::cin >> file_name;
+  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+  std::getline(std::cin, file_name);
   req.mutable_friend_get_file_req()->set_file_name(file_name);
   SendToServer(req.SerializeAsString());
   ReadEventfd(friendefd);
@@ -1791,6 +1995,36 @@ void Friend() {
   }
 }
 
+void DelSelf() {
+  std::string agree;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "你确定注销账号吗(y/n)\n";
+    std::cout << Tail;
+  }
+  std::cin >> agree;
+  while (true) {
+    if (agree == "n" || agree == "no") {
+      return;
+    }
+    if (agree == "y" || agree == "yes") {
+      ServerMessage req;
+      req.set_type(ServerMessageType::UserDelSelfReqType);
+      req.mutable_user_del_self_req()->set_user_id(uid);
+      SendToServer(req.SerializeAsString());
+      ReadEventfd(selfefd);
+      exit(0);
+    }
+    agree.clear();
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "未知操作，请重新输入\n";
+      std::cout << Tail;
+    }
+    std::cin >> agree;
+  }
+}
+
 void about() {
   while (true) {
     int flag = 0;
@@ -1833,6 +2067,7 @@ void about() {
         UpdatePassword();
         break;
       case 5:
+        DelSelf();
         break;
       case 6:
         return;
@@ -2063,6 +2298,9 @@ void GetSessionApply(const int& num) {
 }
 
 void PrintMember() {
+  if (!groupsuccess) {
+    return;
+  }
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Yellow;
@@ -2162,11 +2400,474 @@ void CancelAdmin(const int& num) {
   }
   ServerMessage req;
   req.set_type(ServerMessageType::CancelGroupAdminReqType);
-  req.mutable_set_group_admin_req()->set_user_id(uid);
-  req.mutable_set_group_admin_req()->set_session_id(
+  req.mutable_cancel_group_admin_req()->set_user_id(uid);
+  req.mutable_cancel_group_admin_req()->set_session_id(
       group_list[num - 1].session_id());
-  req.mutable_set_group_admin_req()->set_peer_id(
+  req.mutable_cancel_group_admin_req()->set_peer_id(
       member_list[flag - 1].user_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void GroupAddFriend(const int& num) {
+  GetFriendList();
+  if (!friendsuccess) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要进行操作的对象编号\n" << Tail;
+  }
+  int i = 0;
+  while (!(std::cin >> i) || i <= 0 || i > friend_list.size()) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "请输入有效的好友编号" << Tail << std::endl;
+    }
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::GroupAddFriendReqType);
+  req.mutable_group_add_friend_req()->set_user_id(uid);
+  req.mutable_group_add_friend_req()->set_peer_id(friend_list[i - 1].user_id());
+  req.mutable_group_add_friend_req()->set_session_id(
+      group_list[num - 1].session_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void GroupDelMember(const int& num) {
+  GetMemberList(num);
+  if (!groupsuccess) {
+    return;
+  }
+  PrintMember();
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要进行操作的对象编号\n" << Tail;
+  }
+  int i = 0;
+  while (!(std::cin >> i) || i <= 1 || i > member_list.size()) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "请输入有效的成员编号" << Tail << std::endl;
+    }
+  }
+  if (member_list[i - 1].user_id() == uid) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "你不能踢自己" << Tail << std::endl;
+    }
+    return;
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::GroupDelMemberReqType);
+  req.mutable_group_del_member_req()->set_user_id(uid);
+  req.mutable_group_del_member_req()->set_peer_id(member_list[i - 1].user_id());
+  req.mutable_group_del_member_req()->set_session_id(
+      group_list[num - 1].session_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void OwnerCancelGroup(const int& num) {
+  GetMemberList(num);
+  if (!groupsuccess) {
+    return;
+  }
+  if (uid != member_list[0].user_id()) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "你不是群主，无法进行此操作\n" << Tail;
+    }
+    return;
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::OwnerCancelGroupReqType);
+  req.mutable_owner_cancel_group_req()->set_user_id(uid);
+  req.mutable_owner_cancel_group_req()->set_session_id(
+      group_list[num - 1].session_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void MemberExitGroup(const int& num) {
+  GetMemberList(num);
+  if (!groupsuccess) {
+    return;
+  }
+  if (uid == member_list[0].user_id()) {
+    std::string agree;
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Cyan << "你是群主，这会使群聊解散(y/n)\n";
+      std::cout << Tail;
+    }
+    std::cin >> agree;
+    while (true) {
+      if (agree == "n" || agree == "no") {
+        return;
+      }
+      if (agree == "y" || agree == "yes") {
+        OwnerCancelGroup(num);
+        return;
+      }
+      agree.clear();
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "未知操作，请重新输入\n";
+        std::cout << Tail;
+      }
+      std::cin >> agree;
+    }
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::MemberExitGroupReqType);
+  req.mutable_member_exit_group_req()->set_user_id(uid);
+  req.mutable_member_exit_group_req()->set_session_id(
+      group_list[num - 1].session_id());
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+}
+
+void GroupSendString(const int& num) {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GroupSendMessageReqType);
+  req.mutable_group_send_message_req()->set_user_id(uid);
+  req.mutable_group_send_message_req()->set_session_id(
+      group_list[num - 1].session_id());
+  std::string body;
+  std::cout << Cyan << "输入quit以结束\n" << Tail;
+  while (true) {
+    body.clear();
+    std::getline(std::cin, body);
+    if (body == "quit") {
+      break;
+    }
+    if (body.empty()) {
+      continue;
+    }
+    auto tme = req.mutable_group_send_message_req()->mutable_message();
+    tme->set_message_type(MessageType::string);
+    tme->set_body(body);
+    SendToServer(req.SerializeAsString());
+    if (cancelgroup) {
+      return;
+    }
+  }
+}
+
+void GroupSendFile(const int& num) {
+  std::string file_name;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Cyan << "请输入你要上传的文件\n" << Tail;
+  }
+  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+  std::getline(std::cin, file_name);
+  while (!std::filesystem::exists(file_name)) {
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "文件不存在，请重新输入\n" << Tail;
+    }
+    std::getline(std::cin, file_name);
+  }
+  std::filesystem::path p(file_name);
+  ServerMessage req;
+  req.set_type(ServerMessageType::GroupSendFileReqType);
+  req.mutable_group_send_file_req()->set_user_id(uid);
+  req.mutable_group_send_file_req()->set_session_id(
+      group_list[num - 1].session_id());
+  req.mutable_group_send_file_req()->set_file_name(p.filename().string());
+  SendToServer(req.SerializeAsString());
+  std::string tmp_file_id;
+  bool tmp_file_exist;
+  ReadEventfd(groupefd);
+  if (!groupsuccess) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> mtx(sendfileidlock);
+    tmp_file_id = send_file_id;
+    tmp_file_exist = filexist;
+  }
+  bool ifcontinue;
+  if (tmp_file_exist) {
+    int flag = 0;
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "你曾经上传过该文件,请选择\n"
+                << Tail << Cyan << "(1)继续上传\n"
+                << "(2)重新上传\n"
+                << "(3)放弃上传\n"
+                << Tail;
+    }
+    while (!(std::cin >> flag) || flag < 1 || flag > 3) {
+      std::cin.clear();  // 清除错误标志位
+      std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                      '\n');  // 丢弃错误输入
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "不存在编号为此的操作，请重新输入\n" << Tail;
+      }
+    }
+    switch (flag) {
+      case 1:
+        ifcontinue = true;
+        break;
+      case 2:
+        ifcontinue = false;
+        break;
+      case 3:
+        return;
+    }
+  } else {
+    ifcontinue = false;
+  }
+  std::thread send_file([file_name, tmp_file_id, ifcontinue, num, p]() {
+    Socket fs;
+    fs.CreateClient(8085, file_ip);
+    FileServer req;
+    req.set_type(FileServerType::FileSendReqType);
+    if (ifcontinue) {
+      req.mutable_file_send_req()->set_send_type(FileSendContinue);
+    } else {
+      req.mutable_file_send_req()->set_send_type(FileSendFromBegin);
+    }
+    req.mutable_file_send_req()->set_file_id(tmp_file_id);
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    fs.Send(body.c_str(), body.size());
+    char buff[65535];
+    Buffer buf;
+    while (true) {
+      int ssz = fs.Recv(buff, sizeof(buff));
+      buf.WriteAndPush(buff, ssz);
+      std::string lenLine = buf.GetLine();
+      if (lenLine.empty()) {
+        break;
+      }
+      int bodyLen = 0;
+      try {
+        bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+      } catch (...) {
+        buf.Clear();
+        fs.Close();
+        return;
+      }
+      if (buf.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+        break;
+      }
+      buf.MoveReadIndex(lenLine.size());
+      std::string data = buf.ReadAsStringAndPop(bodyLen);
+      FileClient msg;
+      if (!msg.ParseFromString(data)) {
+        continue;
+      }
+      auto rsp = msg.file_send_rsp();
+      if (!rsp.success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "文件上传失败,原因：" << rsp.errmsg() << Tail
+                    << std::endl;
+        }
+        fs.Close();
+        return;
+      } else {
+        auto sz = rsp.file_sz();
+        auto tsz = std::filesystem::file_size(file_name);
+        int file_fd = open(file_name.c_str(), O_RDONLY);
+        if (file_fd == -1) {
+          {
+            std::unique_lock<std::mutex> mtx(iolock);
+            std::cout << Red << "打开文件失败：" << file_name << Tail
+                      << std::endl;
+          }
+          fs.Close();
+          return;
+        }
+        size_t step = 60000;
+        off_t offset = sz;
+        while (offset < tsz) {
+          auto count = std::min(step,
+                                tsz - offset);  // 计算剩余数据大小
+          ssize_t ret =
+              sendfile(fs.Fd(), file_fd, &offset, count);  // 发送文件部分
+          if (ret == -1) {
+            if (errno == EAGAIN || errno == EINTR) {
+              continue;
+            }
+            {
+              std::unique_lock<std::mutex> mtx(iolock);
+              std::cout << Red << "发送文件出错" << std::endl << Tail;
+            }
+            break;
+          }
+        }
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Green << "文件已全部发送完毕" << Tail << std::endl;
+        }
+        close(file_fd);
+        break;
+      }
+    }
+    fs.Close();
+    ServerMessage creq;
+    creq.set_type(ServerMessageType::GroupSendMessageReqType);
+    creq.mutable_group_send_message_req()->set_user_id(uid);
+    creq.mutable_group_send_message_req()->set_session_id(
+        group_list[num - 1].session_id());
+    auto me = creq.mutable_group_send_message_req()->mutable_message();
+    me->set_message_type(MessageType::file);
+    me->set_body(p.filename());
+    SendToServer(creq.SerializeAsString());
+  });
+  send_file.detach();
+}
+
+void GroupGetFile(const int& num) {
+  GetMemberList(num);
+  if (!groupsuccess) {
+    return;
+  }
+  PrintMember();
+  int flag = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入你要获取文件的归属:\n" << Tail;
+  }
+  while (!(std::cin >> flag) || flag < 1 || flag > member_list.size()) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "不存在编号为此的成员，请重新输入\n" << Tail;
+    }
+  }
+  ServerMessage req;
+  req.set_type(ServerMessageType::GroupGetFileReqType);
+  req.mutable_group_get_file_req()->set_user_id(uid);
+  req.mutable_group_get_file_req()->set_session_id(
+      group_list[num - 1].session_id());
+  req.mutable_group_get_file_req()->set_send_id(
+      member_list[flag - 1].user_id());
+  std::string file_name;
+  {
+    std::cout << Yellow << "请输入你要获取的文件名:\n" << Tail;
+  }
+  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+  std::getline(std::cin, file_name);
+  req.mutable_group_get_file_req()->set_file_name(file_name);
+  SendToServer(req.SerializeAsString());
+  ReadEventfd(groupefd);
+  if (!groupsuccess) {
+    return;
+  }
+  std::string tmp_file_id;
+  {
+    std::unique_lock<std::mutex> mtx(getfilelock);
+    tmp_file_id = get_file_id;
+  }
+  std::thread get_file([tmp_file_id, file_name]() {
+    Socket fg;
+    fg.CreateClient(8085, file_ip);
+    FileServer req;
+    req.set_type(FileServerType::FileGetReqType);
+    req.mutable_file_get_req()->set_file_id(tmp_file_id);
+    std::string sreq = req.SerializeAsString();
+    std::string body = std::to_string(sreq.size()) + "\r\n" + sreq;
+    fg.Send(body.c_str(), body.size());
+    char buff[65535];
+    Buffer buf;
+    while (true) {
+      int ssz = fg.Recv(buff, sizeof(buff));
+      buf.WriteAndPush(buff, ssz);
+      std::string lenLine = buf.GetLine();
+      if (lenLine.empty()) {
+        break;
+      }
+      int bodyLen = 0;
+      try {
+        bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+      } catch (...) {
+        buf.Clear();
+        fg.Close();
+        return;
+      }
+      if (buf.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+        break;
+      }
+      buf.MoveReadIndex(lenLine.size());
+      std::string data = buf.ReadAsStringAndPop(bodyLen);
+      FileClient msg;
+      if (!msg.ParseFromString(data)) {
+        continue;
+      }
+      auto rsp = msg.file_get_rsp();
+      if (!rsp.success()) {
+        {
+          std::unique_lock<std::mutex> mtx(iolock);
+          std::cout << Red << "文件下载失败,原因：" << rsp.errmsg() << Tail
+                    << std::endl;
+        }
+        fg.Close();
+        return;
+      } else {
+        std::ofstream out;
+        out.open(file_dir + file_name,
+                 std::ios::out | std::ios::trunc | std::ios::binary);
+        while (true) {
+          ssize_t sz = fg.Recv(buff, sizeof(buff));
+          if (sz == 0) {
+            std::cout << Green << "文件下载成功" << Tail << std::endl;
+            out.close();
+            break;
+          } else if (sz < 0) {
+            if (sz < 0 && ((errno == EAGAIN || errno == EINTR))) {
+              continue;
+            }
+            out.close();
+            return;
+          }
+          out.write(buff, sz);
+        }
+        break;
+      }
+    }
+    fg.Close();
+  });
+  get_file.detach();
+}
+
+void GroupHistoryMessage(const int& num) {
+  ServerMessage req;
+  req.set_type(ServerMessageType::GroupHistoryMessageReqType);
+  req.mutable_group_history_message_req()->set_user_id(uid);
+  req.mutable_group_history_message_req()->set_session_id(
+      group_list[num - 1].session_id());
+  int sum = 0;
+  {
+    std::unique_lock<std::mutex> mtx(iolock);
+    std::cout << Yellow << "请输入你要获取的历史聊天记录条数" << Tail
+              << std::endl;
+  }
+  while (!(std::cin >> sum) || sum <= 0) {
+    std::cin.clear();  // 清除错误标志位
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
+                    '\n');  // 丢弃错误输入
+    {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Red << "请输入大于0的有效的数字" << Tail << std::endl;
+    }
+  }
+  req.mutable_group_history_message_req()->set_message_size(sum);
   SendToServer(req.SerializeAsString());
   ReadEventfd(groupefd);
 }
@@ -2226,30 +2927,31 @@ void ToGroup() {
     std::cin >> flag;
     switch (flag) {
       case 1:
-
+        GroupSendString(i);
         return;
       case 2:
-
+        GroupSendFile(i);
         return;
       case 3:
-
+        GroupGetFile(i);
         return;
       case 4:
-
+        GroupAddFriend(i);
         return;
       case 5:
-
+        MemberExitGroup(i);
         return;
       case 6:
-
+        GroupDelMember(i);
         return;
       case 7:
         SetAdmin(i);
         return;
       case 8:
-
+        CancelAdmin(i);
         return;
       case 9:
+        GroupHistoryMessage(i);
         return;
       case 10:
         GetMemberList(i);
@@ -2259,6 +2961,7 @@ void ToGroup() {
         GetSessionApply(i);
         return;
       case 12:
+        OwnerCancelGroup(i);
         return;
       case 13:
         return;
@@ -2614,8 +3317,6 @@ void EmailLogin() {
       std::thread recv(Recv);
       recv.detach();
       Menu();
-      // std::this_thread::sleep_for(std::chrono::seconds(10));
-      // std::this_thread::sleep_for(std::chrono::seconds(1));
     } else {
       if (rsp.errmsg() == "验证码错误") {
         vcode.clear();
