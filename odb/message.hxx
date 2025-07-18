@@ -20,24 +20,24 @@ class Message {
         _message_type(type),
         _create_time(time) {}
 
-  std::string MessageId() { return _message_id; }
+  std::string MessageId()const { return _message_id; }
   void SetMessageId(const std::string& mid) { _message_id = mid; }
 
-  std::string SessionId() { return _session_id; }
+  std::string SessionId()const { return _session_id; }
   void SetSessioneId(const std::string& sid) { _session_id = sid; }
 
-  std::string UserId() { return _user_id; }
+  std::string UserId()const { return _user_id; }
   void SetUserId(const std::string& uid) { _user_id = uid; }
 
-  unsigned char MessageType() { return _message_type; }
+  unsigned char MessageType() const { return _message_type; }
   void SetMessageType(const unsigned char& type) { _message_type = type; }
 
-  boost::posix_time::ptime CreateTime() { return _create_time; }
+  boost::posix_time::ptime CreateTime()const { return _create_time; }
   void SetCreateTime(const boost::posix_time::ptime& time) {
     _create_time = time;
   }
 
-  std::string Content() {
+  std::string Content()const {
     if (!_content) {
       return std::string();
     }
@@ -56,7 +56,7 @@ class Message {
 #pragma db type("varchar(64)")
   std::string _user_id;
   unsigned char _message_type;
-#pragma db type("TIMESTAMP")
+#pragma db type("TIMESTAMP(6)")
   boost::posix_time::ptime _create_time;
   odb::nullable<std::string> _content;
 };
