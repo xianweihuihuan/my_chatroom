@@ -10,6 +10,7 @@ enum FileSendType {
 enum FileServerType {
   FileSendReqType = 0;
   FileGetReqType = 1;
+  FileDelReqType = 2;
 }
 
 enum FileClientType {
@@ -34,11 +35,17 @@ message FileGetRsp{
   bool success = 1;
   string errmsg = 2;
 }
+
+message FileDelReq{
+  repeated string file_id =  1;
+}
+
 message FileServer{
   FileServerType type = 1;
   oneof payload{
     FileSendReq file_send_req = 2;
     FileGetReq file_get_req = 3;
+    FileDelReq file_del_req = 4;
   }
 }
 

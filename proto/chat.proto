@@ -7,6 +7,7 @@ message UserInfo {
     string user_id = 1;//用户ID
     string nickname = 2;//昵称
     string email = 3; //绑定手机号
+    optional bool iflogin = 4;
 }
 message GroupInfo{
     string session_id = 1;
@@ -42,6 +43,16 @@ enum ServerMessageType {
     GetMemberListReqType = 26;
     SetGroupAdminReqType = 27;
     CancelGroupAdminReqType = 28;
+    GroupAddFriendReqType = 29;
+    GroupDelMemberReqType = 30;
+    OwnerCancelGroupReqType = 31;
+    MemberExitGroupReqType = 32;
+    GroupSendMessageReqType = 33;
+    GroupSendFileReqType =  34;
+    GroupGetFileReqType = 35;
+    GroupHistoryMessageReqType = 36;
+    UserDelSelfReqType = 37;
+    HeartType = 38;
 }
 
 
@@ -79,6 +90,17 @@ enum ClientMessageType{
     GetMemberListRspType = 30;
     SetGroupAdminRspType = 31;
     CancelGroupAdminRspType = 32;
+    GroupAddFriendRspType = 33;
+    GroupDelMemberRspType = 34;
+    OwnerCancelGroupRspType = 35;
+    MemberExitGroupRspType = 36;
+    GroupSendMessageRspType = 37;
+    GroupMessageNoticeType = 38;
+    GroupSendFileRspType = 39;
+    GroupGetFileRspType = 40;
+    GroupHistoryMessageRspType = 41;
+    UserDelSelfRspType = 42;
+    FriendOffNoticeType = 43;
 }
 
 //----------------------------
@@ -328,8 +350,6 @@ message FriendHistoryMessageRsp{
     repeated MessageofFriend message = 3;
 }
 
-
-
 message FriendSendFileReq{
     string user_id = 1;
     string peer_id = 2;
@@ -437,6 +457,106 @@ message CancelGroupAdminRsp{
     string errmsg = 2;
 }
 
+message GroupAddFriendReq{
+    string user_id = 1;
+    string peer_id = 2;
+    string session_id  = 3;
+}
+message GroupAddFriendRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message GroupDelMemberReq{
+    string user_id = 1;
+    string peer_id = 2;
+    string session_id  = 3;
+}
+message GroupDelMemberRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message OwnerCancelGroupReq{
+    string user_id = 1;
+    string session_id = 2;
+}
+message OwnerCancelGroupRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message MemberExitGroupReq{
+    string user_id = 1;
+    string session_id = 2;
+}
+message MemberExitGroupRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message GroupSendMessageReq{
+    string user_id = 1;
+    string session_id = 2;
+    MessageofSend message = 3;
+}
+message GroupSendMessageRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+message GroupMessageNotice{
+    string member_name = 1;
+    string session_name = 2;
+    MessageType message_type = 3;
+    string body = 4;
+}
+
+message GroupSendFileReq{
+    string user_id = 1;
+    string session_id = 2;
+    string file_name = 3;
+}
+message GroupSendFileRsp{
+    bool success = 1;
+    string errmsg = 2;
+    string file_id = 3;
+    bool ifexist = 4;
+}
+message GroupGetFileReq{
+    string user_id = 1;
+    string session_id  =2;
+    string send_id = 3;
+    string file_name = 4;
+}
+message GroupGetFileRsp{
+    bool success = 1;
+    string errmsg = 2;
+    string file_id = 3;
+}
+
+message GroupHistoryMessageReq{
+    string user_id = 1;
+    string session_id = 2;
+    int32 message_size = 3;
+}
+message GroupHistoryMessageRsp{
+    bool success = 1;
+    string errmsg = 2;
+    repeated MessageofSession message = 3;
+}
+
+message UserDelSelfReq{
+    string user_id = 1;
+}
+message UserDelSelfRsp{
+    bool success = 1;
+    string errmsg = 2;
+}
+
+message FriendOffNotice{
+    string name = 1;
+}
+
 message ServerMessage{
     ServerMessageType type = 1;
     oneof payload {
@@ -469,8 +589,18 @@ message ServerMessage{
         GetMemberListReq get_member_list_req = 28;
         SetGroupAdminReq set_group_admin_req = 29;
         CancelGroupAdminReq cancel_group_admin_req = 30;
+        GroupAddFriendReq group_add_friend_req = 31;
+        GroupDelMemberReq group_del_member_req = 32;
+        OwnerCancelGroupReq owner_cancel_group_req = 33;
+        MemberExitGroupReq member_exit_group_req = 34;
+        GroupSendMessageReq group_send_message_req = 35;
+        GroupSendFileReq group_send_file_req = 36;
+        GroupGetFileReq group_get_file_req = 37;
+        GroupHistoryMessageReq group_history_message_req = 38;
+        UserDelSelfReq user_del_self_req = 39;
     }
 }
+
 
 
 message ClientMessage{
@@ -509,5 +639,16 @@ message ClientMessage{
         GetMemberListRsp get_member_list_rsp = 32;
         SetGroupAdminRsp set_group_admin_rsp = 33;
         CancelGroupAdminRsp cancel_group_admin_rsp = 34;
+        GroupAddFriendRsp group_add_friend_rsp = 35;
+        GroupDelMemberRsp group_del_member_rsp = 36;
+        OwnerCancelGroupRsp owner_cancel_group_rsp = 37;
+        MemberExitGroupRsp member_exit_group_rsp = 38;
+        GroupSendMessageRsp group_send_message_rsp = 39;
+        GroupMessageNotice group_message_notice = 40;
+        GroupSendFileRsp group_send_file_rsp = 41;
+        GroupGetFileRsp group_get_file_rsp = 42;
+        GroupHistoryMessageRsp group_history_message_rsp = 43;
+        UserDelSelfRsp user_del_self_rsp = 44;
+        FriendOffNotice friend_off_notice = 45;
     }
 }
