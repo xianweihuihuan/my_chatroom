@@ -18,16 +18,18 @@ DEFINE_int32(redis_port, 6379, "Redis访问端口");
 DEFINE_int32(redis_db, 0, "Redis访问数据库编号");
 DEFINE_bool(redis_keepalive, true, "Redis数据长保活");
 
+DEFINE_string(file_path, "./file_data", "文件");
+
 DEFINE_string(ver_username, "xianweihuihuan@163.com", "发送邮箱");
 DEFINE_string(ver_pswd, "QPtgXwngD2zjgFGU", "邮箱验证密钥");
 
-DEFINE_string(scrt, "../../key/server.crt", "SSL服务端证书");
-DEFINE_string(skey, "../../key/server.key", "SSL服务端密钥");
+DEFINE_int32(port, 8085, "当前服务器监听端口");
 
 int main(int argc, char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  Xianwei::TcpServer sp(8085, false, "", "");
+  Xianwei::TcpServer sp(FLAGS_port, false, "", "","");
+  Xianwei::path = FLAGS_file_path;
   sp.SetMysqlMessage(FLAGS_mysql_user, FLAGS_mysql_pswd, FLAGS_mysql_host,
                      FLAGS_mysql_db, FLAGS_mysql_cset, FLAGS_mysql_port,
                      FLAGS_mysql_pool_count);
