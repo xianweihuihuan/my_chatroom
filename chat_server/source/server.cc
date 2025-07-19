@@ -23,11 +23,19 @@ DEFINE_string(ver_pswd, "QPtgXwngD2zjgFGU", "邮箱验证密钥");
 
 DEFINE_string(scrt, "../../key/server.crt", "SSL服务端证书");
 DEFINE_string(skey, "../../key/server.key", "SSL服务端密钥");
+DEFINE_string(ca, "../../key/ca.crt", "SSL客户端证书");
+
+DEFINE_int32(port, 8080, "当前服务器监听端口");
+
+DEFINE_string(file_ip, "127.0.0.1", "文件服务器IP地址");
+DEFINE_int32(file_port, 8085, "文件服务端口");
 
 int main(int argc, char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
+  Xianwei::file_server_ip = FLAGS_file_ip;
+  Xianwei::file_server_port = FLAGS_file_port;
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  Xianwei::TcpServer sp(8080, true, FLAGS_scrt, FLAGS_skey);
+  Xianwei::TcpServer sp(FLAGS_port, true, FLAGS_scrt, FLAGS_skey,FLAGS_ca);
   sp.SetMessageCallback(Xianwei::OnMessage);
   sp.SetClosedCallback(Xianwei::Onclose);
   auto cache_mysql = Xianwei::ODBFactory::Create(
