@@ -19,6 +19,7 @@ int main(int argc,char*argv[]) {
   SSL_load_error_strings();
   OpenSSL_add_all_algorithms();
   file_ip = FLAGS_server_ip;
+  file_port = FLAGS_file_port;
   file_dir = "./file_data";
   mkdir(file_dir.c_str(), 0775);
   if (file_dir.back() != '/') {
