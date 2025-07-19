@@ -1483,6 +1483,7 @@ void GetFriendInfo(const int& num) {
 }
 
 void SendString(const int& num) {
+  deletefriend = false;
   ServerMessage req;
   req.set_type(ServerMessageType::FriendSendMessageReqType);
   req.mutable_friend_send_message_req()->set_user_id(uid);
@@ -2537,6 +2538,7 @@ void MemberExitGroup(const int& num) {
 }
 
 void GroupSendString(const int& num) {
+  cancelgroup = false;
   ServerMessage req;
   req.set_type(ServerMessageType::GroupSendMessageReqType);
   req.mutable_group_send_message_req()->set_user_id(uid);
