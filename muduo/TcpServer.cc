@@ -67,7 +67,8 @@ namespace Xianwei {
 TcpServer::TcpServer(int port,
                      bool enable_ssl,
                      const std::string& scrt,
-                     const std::string& skey)
+                     const std::string& skey,
+                     const std::string& ca)
     : port_(port),
       next_id_(0),
       enable_inactive_release_(false),
@@ -111,7 +112,7 @@ TcpServer::TcpServer(int port,
       abort();
     }
     SSL_CTX_set_verify(ssl_ctx_, SSL_VERIFY_PEER, nullptr);
-    if (SSL_CTX_load_verify_locations(ssl_ctx_, "../../key/ca.crt", nullptr) !=
+    if (SSL_CTX_load_verify_locations(ssl_ctx_, ca.c_str(), nullptr) !=
         1) {
       LOG_ERROR("加载 CA 失败，用于客户端证书校验");
       ERR_print_errors_fp(stderr);
@@ -120,7 +121,7 @@ TcpServer::TcpServer(int port,
     }
     LOG_DEBUG("SSL加载完毕");
   }
-  //接收FD设置回调函数
+  // 接收FD设置回调函数
   acceptor_.SetAcceptCallback(
       std::bind(&TcpServer::NewConnection, this, std::placeholders::_1));
   acceptor_.Listen();
@@ -194,7 +195,6 @@ void TcpServer::RemoveConnectionInLoop(const PtrConnection& conn) {
 void TcpServer::Start() {
   pool_.Create();
   base_loop_.Start();
-  
 }
 
 void TcpServer::SetMysqlMessage(std::string user,
