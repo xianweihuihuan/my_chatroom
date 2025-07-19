@@ -45,6 +45,7 @@ std::mutex sendfileidlock;
 std::mutex getfilelock;
 std::string send_file_id;
 std::string get_file_id;
+int file_port;
 std::string file_ip;
 bool filexist;
 std::string file_dir;
@@ -1634,7 +1635,7 @@ void FriendSendFile(const int& num) {
   }
   std::thread send_file([file_name, tmp_file_id, ifcontinue, num, p]() {
     Socket fs;
-    fs.CreateClient(8085, file_ip);
+    fs.CreateClient(file_port, file_ip);
     FileServer req;
     req.set_type(FileServerType::FileSendReqType);
     if (ifcontinue) {
@@ -1782,7 +1783,7 @@ void FriendGetFile(const int& num) {
   }
   std::thread get_file([tmp_file_id, file_name]() {
     Socket fg;
-    fg.CreateClient(8085, file_ip);
+    fg.CreateClient(file_port, file_ip);
     FileServer req;
     req.set_type(FileServerType::FileGetReqType);
     req.mutable_file_get_req()->set_file_id(tmp_file_id);
@@ -2631,7 +2632,7 @@ void GroupSendFile(const int& num) {
   }
   std::thread send_file([file_name, tmp_file_id, ifcontinue, num, p]() {
     Socket fs;
-    fs.CreateClient(8085, file_ip);
+    fs.CreateClient(file_port, file_ip);
     FileServer req;
     req.set_type(FileServerType::FileSendReqType);
     if (ifcontinue) {
@@ -2777,7 +2778,7 @@ void GroupGetFile(const int& num) {
   }
   std::thread get_file([tmp_file_id, file_name]() {
     Socket fg;
-    fg.CreateClient(8085, file_ip);
+    fg.CreateClient(file_port, file_ip);
     FileServer req;
     req.set_type(FileServerType::FileGetReqType);
     req.mutable_file_get_req()->set_file_id(tmp_file_id);

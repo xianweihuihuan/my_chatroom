@@ -5,13 +5,11 @@
 // —— 在这里配置 ——
 
 DEFINE_string(server_ip, "127.0.0.1", "服务器IP地址");
-DEFINE_string(server_port, "8080", "服务器的端口");
+DEFINE_int32(server_port, 8080, "服务器的端口");
 DEFINE_string(ca_path, "../../key/ca.crt", "ca证书所在位置");
 
-
-
-
-
+DEFINE_string(file_ip, "127.0.0.1", "文件服务器IP地址");
+DEFINE_int32(file_port, 8085, "文件服务器监听端口");
 
 int main(int argc,char*argv[]) {
   Xianwei::init_logger(false, "", 0);
@@ -36,7 +34,7 @@ int main(int argc,char*argv[]) {
     return 1;
   }
   Xianwei::Socket so;
-  so.CreateClient(8080, "127.0.0.1");
+  so.CreateClient(FLAGS_server_port,FLAGS_server_ip);
   // 4. 绑定 SSL 并握手
   ssl = SSL_new(ctx);
   SSL_set_fd(ssl, so.Fd());
