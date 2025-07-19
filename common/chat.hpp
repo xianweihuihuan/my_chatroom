@@ -8,6 +8,8 @@
 namespace Xianwei {
 
 Conn connle;
+std::string file_server_ip;
+int file_server_port;
 
 std::shared_ptr<MessageCache> cache;
 
@@ -1121,7 +1123,7 @@ void DeleteFriend(const PtrConnection& conn, const DeleteFriendReq& req) {
   }
   std::thread del_file([&conn, &sid]() {
     Socket df;
-    df.CreateClient(8085, "127.0.0.1");
+    df.CreateClient(file_server_port, file_server_ip);
     FileServer req;
     req.set_type(FileServerType::FileDelReqType);
     auto files = conn->GetOwner()->GetFileTable()->AllFileID(sid);
@@ -1772,7 +1774,7 @@ void OwnerCancelGroup(const PtrConnection& conn,
   }
   std::thread del_file([&conn, &sid]() {
     Socket df;
-    df.CreateClient(8085, "127.0.0.1");
+    df.CreateClient(file_server_port, file_server_ip);
     FileServer req;
     req.set_type(FileServerType::FileDelReqType);
     auto files = conn->GetOwner()->GetFileTable()->AllFileID(sid);
@@ -2139,7 +2141,7 @@ void UserDelSelf(const PtrConnection& conn, const UserDelSelfReq& req) {
   }
   std::thread del_file([conn, file_ids]() {
     Socket df;
-    df.CreateClient(8085, "127.0.0.1");
+    df.CreateClient(file_server_port, file_server_ip);
     FileServer req;
     req.set_type(FileServerType::FileDelReqType);
     for (auto& id : file_ids) {

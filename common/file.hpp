@@ -7,7 +7,7 @@
 
 namespace Xianwei {
 
-std::string path = "./file_data/";
+std::string path;
 
 void OnMessage(const PtrConnection& conn, Buffer* buf) {
   while (true) {
