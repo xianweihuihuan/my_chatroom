@@ -1,0 +1,16 @@
+services:
+  chat_client:
+    image: client:v4
+    tty: true
+    stdin_open: true
+    volumes:
+      - ${PWD}/client.conf:/xianwei/conf/client.conf:ro
+      - type: bind
+        source: ${PWD}/data
+        target: /xianwei/data
+        read_only: false
+        bind: 
+          create_host_path: true
+      - type: bind
+        source: ${HOME}/
+        target: /xianwei/file
