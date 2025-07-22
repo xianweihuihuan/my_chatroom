@@ -87,7 +87,9 @@ mkdir -p ./file_data
 之后在另一个终端运行客户端，连接到聊天服务器：
 
 ```bash
-./client --server_ip=127.0.0.1 --server_port=8080
+cd client
+docker pull xianwei042/client:v5
+docker compose run chat_client
 ```
 
 更多参数请参考 `chat_server/source/server.cc` 与 `file_server/source/server.cc` 中的定义。
