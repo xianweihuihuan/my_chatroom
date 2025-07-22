@@ -1,6 +1,6 @@
 services:
   chat_client:
-    image: client:v4
+    image: xianwei042/client:v5
     tty: true
     stdin_open: true
     volumes:
