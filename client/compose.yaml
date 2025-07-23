@@ -3,6 +3,7 @@ services:
     image: xianwei042/client:v1
     tty: true
     stdin_open: true
+    init: true
     volumes:
       - ${PWD}/client.conf:/xianwei/conf/client.conf:ro
       - type: bind
