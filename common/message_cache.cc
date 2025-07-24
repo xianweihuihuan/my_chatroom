@@ -71,7 +71,7 @@ void MessageCache::FlushLocked(){
     }
   }
   if (!msgs.empty()) {
-    LOG_DEBUG("Redis向Mysql刷新消息");
+    //cdLOG_DEBUG("Redis向Mysql刷新消息");
     table_->InsertBatch(msgs);
   }
 }

@@ -9,9 +9,17 @@ namespace Xianwei {
 
 std::string path;
 
-void OnMessage(const PtrConnection& conn, Buffer* buf) {
+void OnMessage(const int fd) {
+  Socket socket(fd);
+  Buffer buf;
+  char tmp[65535];  
   while (true) {
-    std::string lenLine = buf->GetLine();
+    int sz = socket.NonBlockRecv(tmp, sizeof(tmp));
+    if(sz < 0){
+      continue;
+    }
+    buf.WriteAndPush(tmp, sz);
+    std::string lenLine = buf.GetLine();
     if (lenLine.empty()) {
       break;
     }
@@ -19,15 +27,15 @@ void OnMessage(const PtrConnection& conn, Buffer* buf) {
     try {
       bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
     } catch (...) {
-      buf->Clear();
-      conn->Shutdown();
+      buf.Clear();
+      socket.Close();
       return;
     }
-    if (buf->ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+    if (buf.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
       break;
     }
-    buf->MoveReadIndex(lenLine.size());
-    std::string data = buf->ReadAsStringAndPop(bodyLen);
+    buf.MoveReadIndex(lenLine.size());
+    std::string data = buf.ReadAsStringAndPop(bodyLen);
     FileServer msg;
     if (!msg.ParseFromString(data)) {
       continue;
@@ -35,7 +43,6 @@ void OnMessage(const PtrConnection& conn, Buffer* buf) {
     if (msg.type() == FileServerType::FileSendReqType) {
       FileClient rsp;
       rsp.set_type(FileClientType::FileSendRspType);
-      auto socket = conn->GetSocket();
       auto req = msg.file_send_req();
       std::string file_id = req.file_id();
       std::string file = path + file_id;
@@ -86,13 +93,12 @@ void OnMessage(const PtrConnection& conn, Buffer* buf) {
           return;
         }
         out.write(buffer, sz);
-        LOG_DEBUG("写入{}", sz);
+        //LOG_DEBUG("写入{}", sz);
       }
       break;
     } else if (msg.type() == FileServerType::FileGetReqType) {
       FileClient rsp;
       rsp.set_type(FileClientType::FileGetRspType);
-      auto socket = conn->GetSocket();
       auto req = msg.file_get_req();
       std::string file_id = req.file_id();
       std::string file = path + file_id;
@@ -124,6 +130,7 @@ void OnMessage(const PtrConnection& conn, Buffer* buf) {
       std::cout << tsz << std::endl;
       size_t step = 60000;
       off_t offset = 0;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
       while (offset < tsz) {
         auto count = std::min(step,
                               tsz - offset);  // 计算剩余数据大小

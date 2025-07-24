@@ -10,14 +10,14 @@ class Conn {
     std::unique_lock<std::shared_mutex> mtx(lock_);
     conn_uid_.emplace(std::make_pair(conn, uid));
     uid_conn_.emplace(std::make_pair(uid, conn));
-    LOG_ERROR("新增长链接{}", uid);
+    //LOG_ERROR("新增长链接{}", uid);
   }
 
   PtrConnection Connection(const std::string& uid) {
     std::shared_lock<std::shared_mutex> mtx(lock_);
     auto it = uid_conn_.find(uid);
     if (it == uid_conn_.end()) {
-      LOG_DEBUG("未找到{}长链接信息", uid);
+      //LOG_DEBUG("未找到{}长链接信息", uid);
       return nullptr;
     }
     return it->second;
@@ -27,7 +27,7 @@ class Conn {
     std::shared_lock<std::shared_mutex> mtx(lock_);
     auto it = conn_uid_.find(conn);
     if (it == conn_uid_.end()) {
-      LOG_DEBUG("未找到连接信息");
+      //LOG_DEBUG("未找到连接信息");
       return std::string();
     }
     return it->second;
@@ -38,10 +38,10 @@ class Conn {
     std::unique_lock<std::shared_mutex> mtx(lock_);
     auto it = conn_uid_.find(conn);
     if (it == conn_uid_.end()) {
-      LOG_ERROR("未找到连接信息");
+      //LOG_ERROR("未找到连接信息");
       return;
     }
-    LOG_ERROR("移除长链接信息");
+    //LOG_ERROR("移除长链接信息");
     uid_conn_.erase(it->second);
     conn_uid_.erase(it);
   }
