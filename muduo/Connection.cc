@@ -54,6 +54,27 @@ Connection::Connection(EventLoop* loop,
   channel_.SetErrorCallback([this]() { HandleError(); });
 }
 
+Connection::Connection(EventLoop* loop,
+                       uint64_t conn_id,
+                       int sockfd,
+                       SSL_CTX* ctx,
+                       SSL* ssl)
+    : conn_id_(conn_id),
+      sockfd_(sockfd),
+      loop_(loop),
+      status_(CONNECTING),
+      socket_(sockfd),
+      channel_(loop, sockfd),
+      ssl_ctx_(ctx),
+      ssl_(ssl),
+      enable_ssl_(true) {
+  channel_.SetCloseCallback([this]() { HandleClose(); });
+  channel_.SetEventCallback([this]() { HandleEvent(); });
+  channel_.SetReadCallback([this]() { HandleRead(); });
+  channel_.SetWriteCallback([this]() { HandleWrite(); });
+  channel_.SetErrorCallback([this]() { HandleError(); });
+}
+
 Connection::~Connection() {
   FreeSSL();
 }
@@ -148,12 +169,12 @@ void Connection::HandleRead() {
       }
       return;
     }
-    if(ret == 0){
+    if (ret == 0) {
       ShutdownInLoop();
       return;
     }
     if (errno == EAGAIN || errno == EINTR) {
-      return;  
+      return;
     }
     ShutdownInLoop();
   }
@@ -373,7 +394,7 @@ ssize_t Connection::Recv(void* buf, size_t len) {
   return socket_.NonBlockRecv(buf, len);
 }
 
-Socket Connection::GetSocket(){
+Socket Connection::GetSocket() {
   return socket_;
 }
 }  // namespace Xianwei

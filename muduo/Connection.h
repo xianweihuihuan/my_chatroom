@@ -24,12 +24,19 @@ class Connection : public std::enable_shared_from_this<Connection> {
   using ClosedCallback = std::function<void(const PtrConnection&)>;
   using AnyEventCallback = std::function<void(const PtrConnection&)>;
 
-  //Connection(EventLoop* loop, uint64_t conn_id, int sockfd, SSL_CTX* ctx);
+  // Connection(EventLoop* loop, uint64_t conn_id, int sockfd, SSL_CTX* ctx);
   Connection(EventLoop* loop,
              uint64_t conn_id,
              int sockfd,
              SSL_CTX* ctx,
              bool enable_ssl);
+
+  Connection(EventLoop* loop,
+             uint64_t conn_id,
+             int sockfd,
+             SSL_CTX* ctx,
+             SSL* ssl);
+
   ~Connection();
 
   int Fd() const;

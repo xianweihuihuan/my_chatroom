@@ -82,7 +82,6 @@ class TcpServer {
   // 线程安全移除连接（调度到主循环）
   void RemoveConnection(const PtrConnection& conn);
 
-  void ScheduleFlush(Functor& task, int delay);
 
   uint64_t next_id_;
   int port_;
