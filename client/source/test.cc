@@ -1,8 +1,9 @@
 #include "client.hpp"
 
-
-
 // —— 在这里配置 ——
+DEFINE_bool(run_mode, false, "程序的运行模式，false-调试；true-发布。");
+DEFINE_string(log_file, "Xianwei", "发布模式下，日志的输出文件");
+DEFINE_int32(log_level, 0, "发布模式下，日志的输出等级");
 
 DEFINE_string(server_ip, "127.0.0.1", "服务器IP地址");
 DEFINE_int32(server_port, 8080, "服务器的端口");
@@ -10,9 +11,10 @@ DEFINE_string(ca_path, "../../key/ca.crt", "ca证书所在位置");
 
 DEFINE_string(file_ip, "127.0.0.1", "文件服务器IP地址");
 DEFINE_int32(file_port, 8085, "文件服务器监听端口");
+DEFINE_string(file_dir, "./file_data", "本地文件储存目录");
 
-int main(int argc,char*argv[]) {
-  Xianwei::init_logger(false, "", 0);
+int main(int argc, char* argv[]) {
+  Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
   google::ParseCommandLineFlags(&argc, &argv, true);
   // 1. 初始化 OpenSSL
   SSL_library_init();
@@ -20,7 +22,7 @@ int main(int argc,char*argv[]) {
   OpenSSL_add_all_algorithms();
   file_ip = FLAGS_server_ip;
   file_port = FLAGS_file_port;
-  file_dir = "./file_data";
+  file_dir = FLAGS_file_dir;
   mkdir(file_dir.c_str(), 0775);
   if (file_dir.back() != '/') {
     file_dir += '/';
@@ -35,7 +37,7 @@ int main(int argc,char*argv[]) {
     return 1;
   }
   Xianwei::Socket so;
-  so.CreateClient(FLAGS_server_port,FLAGS_server_ip);
+  so.CreateClient(FLAGS_server_port, FLAGS_server_ip);
   // 4. 绑定 SSL 并握手
   ssl = SSL_new(ctx);
   SSL_set_fd(ssl, so.Fd());
@@ -49,7 +51,7 @@ int main(int argc,char*argv[]) {
   friendefd = eventfd(0, EFD_CLOEXEC);
   groupefd = eventfd(0, EFD_CLOEXEC);
   std::thread heart([]() {
-    while(true){
+    while (true) {
       Xianwei::ServerMessage req;
       req.set_type(Xianwei::ServerMessageType::HeartType);
       Xianwei::SendToServer(req.SerializeAsString());
@@ -60,14 +62,17 @@ int main(int argc,char*argv[]) {
   Xianwei::Print();
   std::cout << Yellow << "输入”start“以开始：";
   std::string ifstart;
-  std::cin.clear();
-  std::cin >> ifstart;
   std::cout << Tail;
-  while (ifstart != "start") {
-    std::cout <<Red<<"未知操作，请重新输入：" <<Yellow;
+  while (true) {
+    if (!std::getline(std::cin,ifstart)){
+      return 0;
+    }
+    if(ifstart == "start"){
+      break;
+    }
+    std::cout << Red << "未知操作，请重新输入：" << Yellow;
     ifstart.clear();
     std::cin.clear();
-    std::cin >> ifstart;
     std::cout << Tail;
   }
   Xianwei::Start();

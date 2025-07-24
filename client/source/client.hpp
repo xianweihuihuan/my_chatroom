@@ -5,6 +5,7 @@
 #include <openssl/ssl.h>
 #include <sys/eventfd.h>
 #include <sys/sendfile.h>
+#include <termios.h>
 #include <unistd.h>
 #include <cstdlib>
 #include <filesystem>
@@ -55,6 +56,7 @@ std::vector<Xianwei::UserInfo> session_apply;
 std::vector<Xianwei::UserInfo> friend_list;
 std::vector<Xianwei::GroupInfo> group_list;
 std::vector<Xianwei::MemberInfo> member_list;
+std::string now_sid;
 namespace Xianwei {
 bool Check_nickname(const std::string& nickname) {
   return nickname.size() < 22;
@@ -116,35 +118,46 @@ void UserRegister() {
   std::string password;
   std::string email;
   std::cout << Yellow << "请输入你的昵称：";
-  std::cin.clear();
   std::cin >> nickname;
   std::cout << Tail;
   while (!Check_nickname(nickname)) {
     nickname.clear();
     std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
-    std::cin.clear();
     std::cin >> nickname;
     std::cout << Tail;
   }
   std::cout << Yellow << "请输入密码(7~14位)：";
-  std::cin.clear();
+  termios oldt{};
+  if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+    perror("tcgetattr");
+    return;
+  }
+  termios newt = oldt;
+  newt.c_lflag &= ~ECHO;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
   std::cin >> password;
   std::cout << Tail;
   while (!Check_password(password)) {
     password.clear();
-    std::cout << Red << "密码不在要求范围内，请重新输入：" << Tail << Yellow;
+    std::cout << Red << "\n密码不在要求范围内，请重新输入：" << Tail << Yellow;
     std::cin.clear();
     std::cin >> password;
     std::cout << Tail;
   }
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
+  std::cout << std::endl;
   std::cout << Yellow << "请输入邮箱：";
-  std::cin.clear();
   std::cin >> email;
   std::cout << Tail;
   while (!Check_email(email)) {
     email.clear();
     std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
-    std::cin.clear();
     std::cin >> email;
     std::cout << Tail;
   }
@@ -156,35 +169,24 @@ void UserRegister() {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
     buffer.WriteAndPush(buf, sz);
-    // 1) 尝试获取一行（包含 "\r\n"）；若没有完整行则退出
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
-      // 缓冲区中还没读到 CRLF 结束的长度行
       continue;
     }
-    // lenLine 形如 "123\r\n"，长度 = lenLine.size()
-    // 2) 解析消息体长度（去掉末尾 "\r\n"）
     int bodyLen = 0;
     try {
       bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
     } catch (...) {
-      // 非法长度，直接断开连接
       buffer.Clear();
-
       return;
     }
-    // 3) 若缓冲区中还没收到完整消息体，则保留长度行，等待更多数据
     if (buffer.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
       continue;
     }
-    // 4) 消费掉长度行
     buffer.MoveReadIndex(lenLine.size());
-    // 5) 读取并弹出 bodyLen 字节的 protobuf 数据
     std::string data = buffer.ReadAsStringAndPop(bodyLen);
-    // 6) 反序列化并分发
     ClientMessage msg;
     if (!msg.ParseFromString(data)) {
-      // 解析失败，丢弃并继续
       continue;
     }
     if (msg.type() != ClientMessageType::EmailVcodeRspType) {
@@ -518,10 +520,6 @@ void HandleMessage(const ClientMessage& msg) {
       break;
     case ClientMessageType::FriendSendMessageRspType:
       if (msg.friend_send_message_rsp().success()) {
-        {
-          std::unique_lock<std::mutex> mtx(iolock);
-          std::cout << Green << "发送成功" << Tail << std::endl;
-        }
       } else {
         {
           if (msg.friend_send_message_rsp().errmsg() == "这不是你的好友") {
@@ -538,7 +536,10 @@ void HandleMessage(const ClientMessage& msg) {
     case ClientMessageType::FriendMessageNoticeType: {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Yellow;
-      printf("[好友][%10s]", msg.friend_message_notice().friend_name().c_str());
+      if (msg.friend_message_notice().sid() != now_sid) {
+        printf("[好友]");
+      }
+      printf("[%10s]", msg.friend_message_notice().friend_name().c_str());
       if (msg.friend_message_notice().message_type() == MessageType::file) {
         printf("[文件]:%s", msg.friend_message_notice().body().c_str());
       } else if (msg.friend_message_notice().message_type() ==
@@ -571,10 +572,10 @@ void HandleMessage(const ClientMessage& msg) {
             for (int i = 0; i < msg.friend_history_message_rsp().message_size();
                  ++i) {
               std::cout << Yellow;
-              printf("[好友][%10s]", msg.friend_history_message_rsp()
-                                         .message(i)
-                                         .friend_name()
-                                         .c_str());
+              printf("[%10s]", msg.friend_history_message_rsp()
+                                   .message(i)
+                                   .friend_name()
+                                   .c_str());
               if (msg.friend_history_message_rsp().message(i).message_type() ==
                   MessageType::file) {
                 printf(
@@ -858,10 +859,6 @@ void HandleMessage(const ClientMessage& msg) {
       break;
     case ClientMessageType::GroupSendMessageRspType:
       if (msg.group_send_message_rsp().success()) {
-        {
-          std::unique_lock<std::mutex> mtx(iolock);
-          std::cout << Green << "发送群聊消息成功" << Tail << std::endl;
-        }
       } else {
         if (msg.group_send_message_rsp().errmsg() == "此群聊已经不存在" ||
             msg.group_send_message_rsp().errmsg() == "你已经不是群聊的成员") {
@@ -879,9 +876,10 @@ void HandleMessage(const ClientMessage& msg) {
     case ClientMessageType::GroupMessageNoticeType: {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Yellow;
-      printf("[群聊:%s][%10s]",
-             msg.group_message_notice().session_name().c_str(),
-             msg.group_message_notice().member_name().c_str());
+      if (msg.group_message_notice().session_id() != now_sid) {
+        printf("[群聊:%s]", msg.group_message_notice().session_name().c_str());
+      }
+      printf("[%10s]", msg.group_message_notice().member_name().c_str());
       if (msg.group_message_notice().message_type() == MessageType::file) {
         printf("[文件]:%s", msg.group_message_notice().body().c_str());
       } else if (msg.group_message_notice().message_type() ==
@@ -934,15 +932,10 @@ void HandleMessage(const ClientMessage& msg) {
             for (int i = 0; i < msg.group_history_message_rsp().message_size();
                  ++i) {
               std::cout << Yellow;
-              printf("[群聊：%s][%10s]",
-                     msg.group_history_message_rsp()
-                         .message(i)
-                         .session_name()
-                         .c_str(),
-                     msg.group_history_message_rsp()
-                         .message(i)
-                         .sender_name()
-                         .c_str());
+              printf("[%10s]", msg.group_history_message_rsp()
+                                   .message(i)
+                                   .sender_name()
+                                   .c_str());
               if (msg.group_history_message_rsp().message(i).message_type() ==
                   MessageType::file) {
                 printf(
@@ -1830,6 +1823,11 @@ void FriendGetFile(const int& num) {
         std::ofstream out;
         out.open(file_dir + file_name,
                  std::ios::out | std::ios::trunc | std::ios::binary);
+        size_t rem = buf.ReadAbleSize();
+        if (rem > 0) {
+          std::string leftover = buf.ReadAsStringAndPop(rem);
+          out.write(leftover.data(), leftover.size());
+        }
         while (true) {
           ssize_t sz = fg.Recv(buff, sizeof(buff));
           if (sz == 0) {
@@ -1874,6 +1872,15 @@ void ToFriend() {
         std::cout << Red << "请输入有效的好友编号" << Tail << std::endl;
       }
     }
+    now_sid = friend_list[i - 1].user_id();
+    ServerMessage req;
+    req.set_type(ServerMessageType::FriendHistoryMessageReqType);
+    req.mutable_friend_history_message_req()->set_user_id(uid);
+    req.mutable_friend_history_message_req()->set_peer_id(
+        friend_list[i - 1].user_id());
+    req.mutable_friend_history_message_req()->set_message_size(20);
+    SendToServer(req.SerializeAsString());
+    ReadEventfd(friendefd);
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Cyan;
@@ -1905,29 +1912,38 @@ void ToFriend() {
     switch (flag) {
       case 1:
         SendString(i);
+        now_sid.clear();
         return;
       case 2:
         FriendSendFile(i);
+        now_sid.clear();
         return;
       case 3:
         FriendGetFile(i);
+        now_sid.clear();
         return;
       case 4:
         IgnoreFriend(i);
+        now_sid.clear();
         return;
       case 5:
         UnIgnoreFriend(i);
+        now_sid.clear();
         return;
       case 6:
         DeleteFriend(i);
+        now_sid.clear();
         return;
       case 7:
         Message(i);
+        now_sid.clear();
         return;
       case 8:
         GetFriendInfo(i);
+        now_sid.clear();
         return;
       case 9:
+        now_sid.clear();
         return;
       default: {
         {
@@ -2453,8 +2469,14 @@ void GroupDelMember(const int& num) {
   int i = 0;
   while (!(std::cin >> i) || i <= 1 || i > member_list.size()) {
     std::cin.clear();  // 清除错误标志位
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(),
-                    '\n');  // 丢弃错误输入
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    if (i == 1) {
+      {
+        std::unique_lock<std::mutex> mtx(iolock);
+        std::cout << Red << "你不能踢群主" << Tail << std::endl;
+      }
+      return;
+    }
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "请输入有效的成员编号" << Tail << std::endl;
@@ -2896,6 +2918,15 @@ void ToGroup() {
         std::cout << Red << "请输入有效的群聊编号" << Tail << std::endl;
       }
     }
+    now_sid = group_list[i - 1].session_id();
+    ServerMessage req;
+    req.set_type(ServerMessageType::GroupHistoryMessageReqType);
+    req.mutable_group_history_message_req()->set_user_id(uid);
+    req.mutable_group_history_message_req()->set_session_id(
+        group_list[i - 1].session_id());
+    req.mutable_group_history_message_req()->set_message_size(20);
+    SendToServer(req.SerializeAsString());
+    ReadEventfd(groupefd);
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Cyan;
@@ -2931,42 +2962,55 @@ void ToGroup() {
     switch (flag) {
       case 1:
         GroupSendString(i);
+        now_sid.clear();
         return;
       case 2:
         GroupSendFile(i);
+        now_sid.clear();
         return;
       case 3:
         GroupGetFile(i);
+        now_sid.clear();
         return;
       case 4:
         GroupAddFriend(i);
+        now_sid.clear();
         return;
       case 5:
         MemberExitGroup(i);
+        now_sid.clear();
         return;
       case 6:
         GroupDelMember(i);
+        now_sid.clear();
         return;
       case 7:
         SetAdmin(i);
+        now_sid.clear();
         return;
       case 8:
         CancelAdmin(i);
+        now_sid.clear();
         return;
       case 9:
         GroupHistoryMessage(i);
+        now_sid.clear();
         return;
       case 10:
         GetMemberList(i);
+        now_sid.clear();
         PrintMember();
         return;
       case 11:
         GetSessionApply(i);
+        now_sid.clear();
         return;
       case 12:
         OwnerCancelGroup(i);
+        now_sid.clear();
         return;
       case 13:
+        now_sid.clear();
         return;
       default: {
         {
@@ -3092,27 +3136,40 @@ void UserLogin() {
   std::string nickname;
   std::string password;
   std::cout << Yellow << "请输入你的昵称：";
-  std::cin.clear();
   std::cin >> nickname;
   std::cout << Tail;
   while (!Check_nickname(nickname)) {
     nickname.clear();
     std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
-    std::cin.clear();
     std::cin >> nickname;
     std::cout << Tail;
   }
   std::cout << Yellow << "请输入你的密码(7~14位)：";
-  std::cin.clear();
+  termios oldt{};
+  if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+    perror("tcgetattr");
+    return;
+  }
+  termios newt = oldt;
+  newt.c_lflag &= ~ECHO;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
   std::cin >> password;
   std::cout << Tail;
   while (!Check_password(password)) {
     password.clear();
-    std::cout << Red << "密码不在要求范围内，请重新输入：" << Tail << Yellow;
+    std::cout << Red << "\n密码不在要求范围内，请重新输入：" << Tail << Yellow;
     std::cin.clear();
     std::cin >> password;
     std::cout << Tail;
   }
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
+  std::cout << std::endl;
   ServerMessage req;
   req.set_type(ServerMessageType::UserLoginReqType);
   req.mutable_user_login_req()->set_nickname(nickname);
@@ -3169,17 +3226,6 @@ void UserLogin() {
         }
       }
       std::cout << Tail;
-      std::string start;
-      std::cout << Yellow << "输入chat以开始：";
-      std::cin.clear();
-      std::cin >> start;
-      std::cout << Tail;
-      while (start != "chat") {
-        start.clear();
-        std::cout << Red << "请重新输入：" << Tail << Yellow;
-        std::cin.clear();
-        std::cin >> start;
-      }
       std::thread recv(Recv);
       recv.detach();
       Menu();
