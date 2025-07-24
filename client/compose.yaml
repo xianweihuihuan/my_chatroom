@@ -13,5 +13,5 @@ services:
         bind: 
           create_host_path: true
       - type: bind
-        source: ${HOME}/
+        source: /
         target: /xianwei/file
