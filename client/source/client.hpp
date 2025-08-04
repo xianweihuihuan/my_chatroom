@@ -144,18 +144,18 @@ bool Check_email(const std::string& address) {
   return std::regex_match(address, mat, reg);
 }
 
-void SendToServer(const std::string body) {
+void SendToServerB(const std::string body) {
   std::string message = std::to_string(body.size()) + "\r\n" + body;
   int i = SSL_write(ssl, message.c_str(), message.size());
 }
 
-// void SendToServer(const std::string body) {
-//   std::string message = std::to_string(body.size()) + "\r\n" + body;
-//   {
-//     std::unique_lock<std::mutex> mtx(sendlock);
-//     conn->SendB(message.c_str(), message.size());
-//   }
-// }
+void SendToServer(const std::string body) {
+  std::string message = std::to_string(body.size()) + "\r\n" + body;
+  {
+    std::unique_lock<std::mutex> mtx(sendlock);
+    conn->Send(message.c_str(), message.size());
+  }
+}
 
 void Heart() {
   heart = std::make_shared<std::thread>([]() {
@@ -166,7 +166,7 @@ void Heart() {
       if (iflogin) {
         Xianwei::SendToServer(req.SerializeAsString());
       } else {
-        SendToServer(req.SerializeAsString());
+        SendToServerB(req.SerializeAsString());
       }
       if (!ifrunning) {
         break;
@@ -1043,7 +1043,7 @@ void UserRegister() {
   Xianwei::ServerMessage req;
   req.set_type(ServerMessageType::EmailVcodeReqType);
   req.mutable_email_verify_code_req()->set_email(email);
-  SendToServer(req.SerializeAsString());
+  SendToServerB(req.SerializeAsString());
   while (true) {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
@@ -1090,7 +1090,7 @@ void UserRegister() {
   regreq.mutable_user_register_req()->set_email(email);
   regreq.mutable_user_register_req()->set_verify_code_id(vid);
   regreq.mutable_user_register_req()->set_verify_code(vcode);
-  SendToServer(regreq.SerializeAsString());
+  SendToServerB(regreq.SerializeAsString());
   while (true) {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
@@ -1132,7 +1132,7 @@ void UserRegister() {
         std::cin >> vcode;
         std::cout << Tail;
         regreq.mutable_user_register_req()->set_verify_code(vcode);
-        SendToServer(regreq.SerializeAsString());
+        SendToServerB(regreq.SerializeAsString());
         continue;
       } else {
         std::cout << Red << rsp.errmsg() << "，失败退出\n" << Tail;
@@ -1626,8 +1626,6 @@ void SendString(const int& num) {
   std::cout << Cyan << "输入quit以结束\n" << Tail;
   while (true) {
     body.clear();
-    auto tme = req.mutable_friend_send_message_req()->mutable_message();
-    tme->set_message_type(MessageType::string);
     if (!std::getline(std::cin, body)) {
       break;
     }
@@ -1637,6 +1635,8 @@ void SendString(const int& num) {
     if (body.empty()) {
       continue;
     }
+    auto tme = req.mutable_friend_send_message_req()->mutable_message();
+    tme->set_message_type(MessageType::string);
     tme->set_body(body);
     SendToServer(req.SerializeAsString());
     if (deletefriend) {
@@ -3340,7 +3340,7 @@ void UserLogin() {
   req.set_type(ServerMessageType::UserLoginReqType);
   req.mutable_user_login_req()->set_nickname(nickname);
   req.mutable_user_login_req()->set_password(password);
-  SendToServer(req.SerializeAsString());
+  SendToServerB(req.SerializeAsString());
   while (true) {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
@@ -3439,7 +3439,7 @@ void EmailLogin() {
   Xianwei::ServerMessage req;
   req.set_type(ServerMessageType::EmailVcodeReqType);
   req.mutable_email_verify_code_req()->set_email(email);
-  SendToServer(req.SerializeAsString());
+  SendToServerB(req.SerializeAsString());
   while (true) {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
@@ -3484,7 +3484,7 @@ void EmailLogin() {
   regreq.mutable_email_login_req()->set_email(email);
   regreq.mutable_email_login_req()->set_verify_code_id(vid);
   regreq.mutable_email_login_req()->set_verify_code(vcode);
-  SendToServer(regreq.SerializeAsString());
+  SendToServerB(regreq.SerializeAsString());
   while (true) {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
@@ -3566,7 +3566,7 @@ void EmailLogin() {
         std::cin >> vcode;
         std::cout << Tail;
         regreq.mutable_email_login_req()->set_verify_code(vcode);
-        SendToServer(regreq.SerializeAsString());
+        SendToServerB(regreq.SerializeAsString());
         continue;
       } else {
         std::cout << Red << rsp.errmsg() << "，失败退出\n" << Tail;
