@@ -4,12 +4,14 @@
 #include "chat.pb.h"
 #include "conn.hpp"
 #include "file.pb.h"
+#include "thread_pool.hpp"
 
 namespace Xianwei {
 
 Conn connle;
 std::string file_server_ip;
 int file_server_port;
+std::shared_ptr<Xianwei::thread_pool> task_pool;
 
 std::shared_ptr<MessageCache> cache;
 
@@ -27,8 +29,12 @@ void Onclose(const PtrConnection& conn) {
     ClientMessage no;
     no.set_type(ClientMessageType::FriendOffNoticeType);
     no.mutable_friend_off_notice()->set_name(user->Nikename());
+    std::string errmsg;
     for (auto& n : friends) {
       auto pconn = connle.Connection(n);
+      if(conn->GetOwner()->GetRelationTable()->Ifignore(n,uid,errmsg)){
+        continue;
+      }
       if (pconn) {
         SendToClient(pconn, no.SerializeAsString());
       }
@@ -94,161 +100,162 @@ void UserDelSelf(const PtrConnection& conn, const UserDelSelfReq& req);
 void HandleMessage(const PtrConnection& conn, ServerMessage& msg) {
   switch (msg.type()) {
     case ServerMessageType::UserRegisterReqType:
-      //LOG_DEBUG("收到用户注册请求");
+      // LOG_DEBUG("收到用户注册请求");
       UserRegister(conn, msg.user_register_req());
       break;
     case ServerMessageType::UserLoginReqType:
-      //LOG_DEBUG("收到用户账号密码登陆请求");
+      // LOG_DEBUG("收到用户账号密码登陆请求");
       UserLogin(conn, msg.user_login_req());
       break;
     case ServerMessageType::EmailVcodeReqType:
-      //LOG_DEBUG("收到用户获取验证码请求");
+      // LOG_DEBUG("收到用户获取验证码请求");
       SendVcode(conn, msg.email_verify_code_req());
       break;
     case ServerMessageType::EmailLoginReqType:
-      //LOG_DEBUG("收到用户邮箱登陆请求");
+      // LOG_DEBUG("收到用户邮箱登陆请求");
       EmailLogin(conn, msg.email_login_req());
       break;
     case ServerMessageType::SetNicknameReqType:
-      //LOG_DEBUG("收到用户更改昵称请求");
+      // LOG_DEBUG("收到用户更改昵称请求");
       SetNickname(conn, msg.set_user_nickname_req());
       break;
     case ServerMessageType::GetUserInfoReqType:
-      //LOG_DEBUG("收到用户获取自身信息的请求");
+      // LOG_DEBUG("收到用户获取自身信息的请求");
       GetUserInfo(conn, msg.get_user_info_req());
       break;
     case ServerMessageType::SetEmailReqType:
-      //LOG_DEBUG("收到用户修改邮箱信息的请求");
+      // LOG_DEBUG("收到用户修改邮箱信息的请求");
       SetUserEmail(conn, msg.set_user_email_req());
       break;
     case ServerMessageType::SetPassword:
-      //LOG_DEBUG("收到用户修改密码信息的请求");
+      // LOG_DEBUG("收到用户修改密码信息的请求");
       SetUserPassword(conn, msg.set_user_password_req());
       break;
     case ServerMessageType::EmailFriendAddReqType:
-      //LOG_DEBUG("收到用户通过邮箱添加好友的请求");
+      // LOG_DEBUG("收到用户通过邮箱添加好友的请求");
       EmailFriendAdd(conn, msg.email_friend_add_req());
       break;
     case ServerMessageType::NicknameFriendAddReqType:
-      //LOG_DEBUG("收到用户通过昵称添加好友的请求");
+      // LOG_DEBUG("收到用户通过昵称添加好友的请求");
       NicknameFriendAdd(conn, msg.nickname_friend_add_req());
       break;
     case ServerMessageType::GetFriendApplyReqtype:
-      //LOG_DEBUG("收到用户获取所有好友申请的请求");
+      // LOG_DEBUG("收到用户获取所有好友申请的请求");
       GetFriendApply(conn, msg.get_friend_apply());
       break;
     case ServerMessageType::GetFriendListReqType:
-      //LOG_DEBUG("收到用户获取好友列表的请求");
+      // LOG_DEBUG("收到用户获取好友列表的请求");
       GetFriendList(conn, msg.get_friend_list_req());
       break;
     case ServerMessageType::SovelFriendApplyReqType:
-      //LOG_DEBUG("收到用户处理好友申请的请求");
+      // LOG_DEBUG("收到用户处理好友申请的请求");
       SovelFriendApply(conn, msg.sovel_friend_apply_req());
       break;
     case ServerMessageType::IgnoreFriendReqType:
-      //LOG_DEBUG("收到用户屏蔽好友的请求");
+      // LOG_DEBUG("收到用户屏蔽好友的请求");
       IgnoreFriend(conn, msg.ignore_friend_req());
       break;
     case ServerMessageType::UnIgnoreFriendReqType:
-      //LOG_DEBUG("收到用户解除好友屏蔽的请求");
+      // LOG_DEBUG("收到用户解除好友屏蔽的请求");
       UnIgnoreFriend(conn, msg.unignore_friend_req());
       break;
     case ServerMessageType::GetFriendInfoReqType:
-      //LOG_DEBUG("收到用户获取好友信息的请求");
+      // LOG_DEBUG("收到用户获取好友信息的请求");
       GetFriendInfo(conn, msg.get_friend_info_req());
       break;
     case ServerMessageType::FriendSendMessageReqType:
-      //LOG_DEBUG("收到用户向好友发送消息的请求");
+      // LOG_DEBUG("收到用户向好友发送消息的请求");
       FriendSendMessage(conn, msg.friend_send_message_req());
       break;
     case ServerMessageType::DeleteFriendReqType:
-      //LOG_DEBUG("收到用户删除好友的请求");
+      // LOG_DEBUG("收到用户删除好友的请求");
       DeleteFriend(conn, msg.delete_friend_req());
       break;
     case ServerMessageType::FriendHistoryMessageReqType:
-      //LOG_DEBUG("收到用户获取好友历史消息的请求");
+      // LOG_DEBUG("收到用户获取好友历史消息的请求");
       FriendHistoryMessage(conn, msg.friend_history_message_req());
       break;
     case ServerMessageType::FriendSendFileReqType:
-      //LOG_DEBUG("收到用户上传文件的请求");
+      // LOG_DEBUG("收到用户上传文件的请求");
       FriendSendFile(conn, msg.friend_send_file_req());
       break;
     case ServerMessageType::FriendGetFileReqType:
-      //LOG_DEBUG("收到用户下载文件的请求");
+      // LOG_DEBUG("收到用户下载文件的请求");
       FriendGetFile(conn, msg.friend_get_file_req());
       break;
     case ServerMessageType::CreateGroupReqType:
-      //LOG_DEBUG("收到用户创建群聊的请求");
+      // LOG_DEBUG("收到用户创建群聊的请求");
       CreateGroup(conn, msg.create_group_req());
       break;
     case ServerMessageType::GetGroupListReqType:
-      //LOG_DEBUG("收到用户获取群聊列表的请求");
+      // LOG_DEBUG("收到用户获取群聊列表的请求");
       GetGroupList(conn, msg.get_group_list_req());
       break;
     case ServerMessageType::UserAddGroupReqType:
-      //LOG_DEBUG("收到用户加入群聊的请求");
+      // LOG_DEBUG("收到用户加入群聊的请求");
       UserAddGroup(conn, msg.user_add_group_req());
       break;
     case ServerMessageType::GetSessionApplyReqType:
-      //LOG_DEBUG("收到获取加群申请的请求");
+      // LOG_DEBUG("收到获取加群申请的请求");
       GetSessionApply(conn, msg.get_session_apply_req());
       break;
     case ServerMessageType::SovelGroupApplyReqType:
-      //LOG_DEBUG("收到用户处理加群申请的请求");
+      // LOG_DEBUG("收到用户处理加群申请的请求");
       SovelGroupApply(conn, msg.sovel_group_apply_req());
       break;
     case ServerMessageType::GetMemberListReqType:
-      //LOG_DEBUG("收到用户获取群聊成员的请求");
+      // LOG_DEBUG("收到用户获取群聊成员的请求");
       GetMemberList(conn, msg.get_member_list_req());
       break;
     case ServerMessageType::SetGroupAdminReqType:
-      //LOG_DEBUG("收到用户设置管理员的请求");
+      // LOG_DEBUG("收到用户设置管理员的请求");
       SetGroupAdmin(conn, msg.set_group_admin_req());
       break;
     case ServerMessageType::CancelGroupAdminReqType:
-      //LOG_DEBUG("收到用户取消管理员的请求");
+      // LOG_DEBUG("收到用户取消管理员的请求");
       CancelGroupAdmin(conn, msg.cancel_group_admin_req());
       break;
     case ServerMessageType::GroupAddFriendReqType:
-      //LOG_DEBUG("收到用户邀请好友进群的请求");
+      // LOG_DEBUG("收到用户邀请好友进群的请求");
       GroupAddFriend(conn, msg.group_add_friend_req());
       break;
     case ServerMessageType::GroupDelMemberReqType:
-      //LOG_DEBUG("收到用户踢出群员的请求");
+      // LOG_DEBUG("收到用户踢出群员的请求");
       GroupDelFriend(conn, msg.group_del_member_req());
       break;
     case ServerMessageType::OwnerCancelGroupReqType:
-      //LOG_DEBUG("收到用户解散群聊的请求");
+      // LOG_DEBUG("收到用户解散群聊的请求");
       OwnerCancelGroup(conn, msg.owner_cancel_group_req());
       break;
     case ServerMessageType::MemberExitGroupReqType:
-      //LOG_DEBUG("收到用户退出群聊的请求");
+      // LOG_DEBUG("收到用户退出群聊的请求");
       MemberExitGroup(conn, msg.member_exit_group_req());
       break;
     case ServerMessageType::GroupSendMessageReqType:
-      //LOG_DEBUG("收到用户发送群聊信息的请求");
+      // LOG_DEBUG("收到用户发送群聊信息的请求");
       GroupSendMessage(conn, msg.group_send_message_req());
       break;
     case ServerMessageType::GroupSendFileReqType:
-      //LOG_DEBUG("收到用户上传群聊文件的请求");
+      // LOG_DEBUG("收到用户上传群聊文件的请求");
       GroupSendFile(conn, msg.group_send_file_req());
       break;
     case ServerMessageType::GroupGetFileReqType:
-      //LOG_DEBUG("收到用户下载群文件的请求");
+      // LOG_DEBUG("收到用户下载群文件的请求");
       GroupGetFile(conn, msg.group_get_file_req());
       break;
     case ServerMessageType::GroupHistoryMessageReqType:
-      //LOG_DEBUG("收到用户获取群聊历史消息的请求");
+      // LOG_DEBUG("收到用户获取群聊历史消息的请求");
       GroupHistoryMessage(conn, msg.group_history_message_req());
       break;
     case ServerMessageType::UserDelSelfReqType:
-      //LOG_DEBUG("收到用户注销账号的请求");
+      // LOG_DEBUG("收到用户注销账号的请求");
       UserDelSelf(conn, msg.user_del_self_req());
       break;
     default:
-      //LOG_DEBUG("连接保活");
+      // LOG_DEBUG("连接保活");
       break;
   }
+  // std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
 
 void OnMessage(const PtrConnection& conn, Buffer* buf) {
@@ -284,7 +291,8 @@ void OnMessage(const PtrConnection& conn, Buffer* buf) {
       // 解析失败，丢弃并继续
       continue;
     }
-    HandleMessage(conn, msg);
+    task_pool->Enter(HandleMessage, conn, msg);
+    //HandleMessage(conn, msg);
   }
 }
 
@@ -424,6 +432,27 @@ void UserLogin(const PtrConnection& conn, const UserLoginReq& req) {
       me->set_body(body["body"].asString());
     }
   }
+  auto friend_apply =
+      conn->GetOwner()->GetOfflineApply()->GetSingle(user->UserId());
+  for (auto& n : friend_apply){
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_user_login_rsp()->add_friend_sovel();
+      me->set_name(body["name"].asString());
+      me->set_agree(body["agree"].asBool());
+    }
+  }
+  auto group_apply =
+      conn->GetOwner()->GetOfflineApply()->GetGroup(user->UserId());
+  for (auto& n : group_apply){
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_user_login_rsp()->add_group_sovel();
+      me->set_name(body["name"].asString());
+      me->set_agree(body["agree"].asBool());
+    }
+  }
+  conn->GetOwner()->GetOfflineApply()->Remove(user->UserId());
   conn->GetOwner()->GetOfflineMessage()->Remove(user->UserId());
   rsp.mutable_user_login_rsp()->set_user_id(user->UserId());
   rsp.mutable_user_login_rsp()->set_email(user->Email());
@@ -434,8 +463,12 @@ void UserLogin(const PtrConnection& conn, const UserLoginReq& req) {
   ClientMessage Nrsp;
   Nrsp.set_type(ClientMessageType::FriendLoginNoticeType);
   Nrsp.mutable_friend_login_notice()->set_name(name);
+  std::string errmsg;
   for (auto fid : fid_list) {
     auto fconn = connle.Connection(fid);
+    if(conn->GetOwner()->GetRelationTable()->Ifignore(fid,user->UserId(),errmsg)){
+      continue;
+    }
     if (fconn) {
       SendToClient(fconn, Nrsp.SerializeAsString());
     }
@@ -513,6 +546,27 @@ void EmailLogin(const PtrConnection& conn, const EmailLoginReq& req) {
       me->set_body(body["body"].asString());
     }
   }
+  auto friend_apply =
+      conn->GetOwner()->GetOfflineApply()->GetSingle(user->UserId());
+  for (auto& n : friend_apply){
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_email_login_rsp()->add_friend_sovel();
+      me->set_name(body["name"].asString());
+      me->set_agree(body["agree"].asBool());
+    }
+  }
+  auto group_apply =
+      conn->GetOwner()->GetOfflineApply()->GetGroup(user->UserId());
+  for (auto& n : group_apply){
+    Json::Value body;
+    if (reader->parse(n.c_str(), n.c_str() + n.size(), &body, nullptr)) {
+      auto me = rsp.mutable_email_login_rsp()->add_group_sovel();
+      me->set_name(body["name"].asString());
+      me->set_agree(body["agree"].asBool());
+    }
+  }
+  conn->GetOwner()->GetOfflineApply()->Remove(user->UserId());
   conn->GetOwner()->GetOfflineMessage()->Remove(user->UserId());
   rsp.mutable_email_login_rsp()->set_user_id(user->UserId());
   rsp.mutable_email_login_rsp()->set_success(true);
@@ -523,8 +577,12 @@ void EmailLogin(const PtrConnection& conn, const EmailLoginReq& req) {
   ClientMessage Nrsp;
   Nrsp.set_type(ClientMessageType::FriendLoginNoticeType);
   Nrsp.mutable_friend_login_notice()->set_name(name);
+  std::string errmsg;
   for (auto fid : fid_list) {
     auto fconn = connle.Connection(fid);
+    if(conn->GetOwner()->GetRelationTable()->Ifignore(fid,user->UserId(),errmsg)){
+      continue;
+    }
     if (fconn) {
       SendToClient(fconn, Nrsp.SerializeAsString());
     }
@@ -893,6 +951,13 @@ void SovelFriendApply(const PtrConnection& conn,
   };
   std::string uid = req.user_id();
   std::string pid = req.peer_id();
+  auto user = conn->GetOwner()->GetUserTable()->Select_by_uid(pid);
+  auto puser = conn->GetOwner()->GetUserTable()->Select_by_uid(uid);
+  if (!user) {
+    LOG_ERROR("该用户已不存在");
+    errfunc("该用户已不存在");
+    return SendToClient(conn, rsp.SerializePartialAsString());
+  }
   if (!conn->GetOwner()->GetFriendApplyTable()->Exists(pid, uid)) {
     LOG_ERROR("不存在好友申请信息{}-{}", pid, uid);
     errfunc("不存在好友申请信息");
@@ -924,6 +989,25 @@ void SovelFriendApply(const PtrConnection& conn,
       errfunc("Mysql创建会话成员信息失败");
       return SendToClient(conn, rsp.SerializeAsString());
     }
+  }
+  ClientMessage no;
+  no.set_type(ClientMessageType::SovelFriendApplyNoticeType);
+  no.mutable_sovel_friend_apply_notice()->set_agree(req.agree());
+  no.mutable_sovel_friend_apply_notice()->set_user_name(puser->Nikename());
+  auto pconn = connle.Connection(pid);
+  if (pconn) {
+    SendToClient(pconn, no.SerializeAsString());
+  } else {
+    Json::StreamWriterBuilder wbd;
+    Json::Value test;
+    test["name"] = puser->Nikename();
+    if (req.agree()) {
+      test["agree"] = true;
+    } else {
+      test["agree"] = false;
+    }
+    std::string str = Json::writeString(wbd, test);
+    conn->GetOwner()->GetOfflineApply()->SingleAppend(pid, str);
   }
   rsp.mutable_sovel_friend_apply_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
@@ -964,6 +1048,7 @@ void IgnoreFriend(const PtrConnection& conn, const IgnoreFriendReq& req) {
   rsp.mutable_ignore_friend_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());
 }
+
 void UnIgnoreFriend(const PtrConnection& conn, const UnIgnoreFriendReq& req) {
   ClientMessage rsp;
   rsp.set_type(ClientMessageType::UnIgnoreFriendRspType);
@@ -1059,6 +1144,10 @@ void FriendSendMessage(const PtrConnection& conn,
     errfunc("发生了未知错误");
     return SendToClient(conn, rsp.SerializeAsString());
   }
+  if(iig){
+    errfunc("被对方拒收了");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
   if (!iig && errmsg.empty()) {
     auto pConn = connle.Connection(pid);
     if (pConn) {
@@ -1069,8 +1158,7 @@ void FriendSendMessage(const PtrConnection& conn,
       noti.mutable_friend_message_notice()->set_body(req.message().body());
       noti.mutable_friend_message_notice()->set_message_type(
           req.message().message_type());
-      LOG_DEBUG("向好友转发消息");
-      SendToClient(pConn, noti.SerializeAsString());
+      SendToClient(pConn, noti.SerializeAsString());   
     } else {
       Json::StreamWriterBuilder wbd;
       Json::Value test;
@@ -1238,6 +1326,11 @@ void FriendSendFile(const PtrConnection& conn, const FriendSendFileReq& req) {
     errfunc("你们不是好友");
     return SendToClient(conn, rsp.SerializeAsString());
   }
+  std::string errmsg;
+  if (conn->GetOwner()->GetRelationTable()->Ifignore(pid, uid, errmsg)){
+    errfunc("被对方拒收");
+    return SendToClient(conn, rsp.SerializeAsString());
+  }
   auto sid = conn->GetOwner()->GetRelationTable()->SessionId(uid, pid);
   if (sid.empty()) {
     LOG_ERROR("未找到会话信息");
@@ -1245,6 +1338,7 @@ void FriendSendFile(const PtrConnection& conn, const FriendSendFileReq& req) {
     return SendToClient(conn, rsp.SerializeAsString());
   }
   std::string file_name = req.file_name();
+  std::string file_sum = req.file_sum();
   std::string file_id;
   if (conn->GetOwner()->GetFileTable()->Exist(sid, uid, file_name)) {
     file_id = conn->GetOwner()->GetFileTable()->FileId(sid, uid, file_name);
@@ -1528,6 +1622,25 @@ void SovelGroupApply(const PtrConnection& conn, const SovelGroupApplyReq& req) {
       errfunc("Mysql新增会话成员信息失败");
       return SendToClient(conn, rsp.SerializeAsString());
     }
+  }
+  ClientMessage no;
+  no.set_type(ClientMessageType::SovelGroupApplyNoticeType);
+  no.mutable_sovel_group_apply_notice()->set_agree(req.agree());
+  no.mutable_sovel_group_apply_notice()->set_name(session->SessionName());
+  auto pconn = connle.Connection(pid);
+  if (pconn) {
+    SendToClient(pconn, no.SerializeAsString());
+  } else {
+    Json::StreamWriterBuilder wbd;
+    Json::Value test;
+    test["name"] = session->SessionName();
+    if (req.agree()) {
+      test["agree"] = true;
+    } else {
+      test["agree"] = false;
+    }
+    std::string str = Json::writeString(wbd, test);
+    conn->GetOwner()->GetOfflineApply()->GroupAppend(pid, str);
   }
   rsp.mutable_sovel_group_apply_rsp()->set_success(true);
   SendToClient(conn, rsp.SerializeAsString());

@@ -44,6 +44,22 @@ class FileTable {
     return ret;
   }
 
+  bool Exist(const std::string file_id) {
+    bool flag;
+    try {
+      odb::transaction trans(db_->begin());
+      typedef odb::query<File> query;
+      typedef odb::result<File> result;
+      result r(db_->query<File>(query::file_id == file_id));
+      flag = !r.empty();
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取文件{}存在消息失败：{}", file_id, e.what());
+      return false;
+    }
+    return flag;
+  }
+
   bool Exist(const std::string& sid,
              const std::string& uid,
              const std::string& file_name) {

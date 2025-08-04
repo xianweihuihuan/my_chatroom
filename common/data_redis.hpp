@@ -110,4 +110,41 @@ class OfflineMessage {
   std::shared_ptr<sw::redis::Redis> client_;
 };
 
+class OfflineApply {
+ public:
+  using ptr = std::shared_ptr<OfflineApply>;
+  OfflineApply(const std::shared_ptr<sw::redis::Redis>& client)
+      : client_(client) {
+  }
+  //uid为消息发送者，pid为离线的消息接受者
+  void SingleAppend(const std::string& pid,const std::string& body){
+    client_->rpush("offapply:single:" + pid, body);
+  }
+
+  
+  void GroupAppend(const std::string& uid,const std::string& body){
+    client_->rpush("offapply:group:" + uid, body);
+  }
+
+  std::vector<std::string> GetSingle(const std::string& uid){
+    std::vector<std::string> result;
+    client_->lrange("offapply:single:" + uid, 0, -1, std::back_inserter(result));
+    return result;
+  }
+
+  std::vector<std::string> GetGroup(const std::string& uid){
+    std::vector<std::string> result;
+    client_->lrange("offapply:group:" + uid, 0, -1, std::back_inserter(result));
+    return result;
+  }
+
+  void Remove(const std::string& uid){
+    client_->del("offapply:single:" + uid);
+    client_->del("offapply:group:" + uid);
+  }
+
+ private:
+  std::shared_ptr<sw::redis::Redis> client_;
+};
+
 }  // namespace  Xianwei
