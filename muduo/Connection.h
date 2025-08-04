@@ -52,6 +52,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
 
   void Established();
   void Send(const char* data, size_t len);
+  void SendB(const char* data, size_t len);
   void Shutdown();
   void Release();
   void EnableInactiveRelease(int sec);
@@ -73,6 +74,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   void CancelInactiveReleaseInLoop();
   void FreeSSL();
   void DoHandshake();
+  SSL* GetSSL() { return ssl_; }
 
  private:
   uint64_t conn_id_;
@@ -85,6 +87,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   Buffer input_buffer_;
   Buffer output_buffer_;
 
+  std::mutex lock_;
   bool enable_ssl_;
   SSL_CTX* ssl_ctx_;
   SSL* ssl_;

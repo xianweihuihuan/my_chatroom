@@ -27,7 +27,7 @@ void Buffer::EnsureWriteSpace(uint64_t len) {
     read_index_ = 0;
     write_index_ = sz;
   } else {
-    LOG_DEBUG("对缓冲区进行扩容：{}", write_index_ + len);
+    //LOG_DEBUG("对缓冲区进行扩容：{}", write_index_ + len);
     buffer_.resize(write_index_ + len);
   }
 }

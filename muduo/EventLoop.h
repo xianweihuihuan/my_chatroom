@@ -3,6 +3,7 @@
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
+#include <atomic>
 #include <cassert>
 #include <functional>
 #include <memory>
@@ -128,6 +129,8 @@ class EventLoop {
   // 启动事件循环（Reactor 主循环）
   void Start();
 
+  void Stop();
+
   // 执行任务池中所有待执行任务（用户投递的）
   void RunAllTasks();
 
@@ -173,9 +176,11 @@ class EventLoop {
   Status::ptr GetStatus() { return redis_status_; }
   Codes::ptr GetCodes() { return redis_codes_; }
   OfflineMessage::ptr GetOfflineMessage() { return redis_message_; }
+  OfflineApply::ptr GetOfflineApply() { return redis_apply_; }
   MessageCache::ptr GetMessageCache() { return message_cache_; }
 
   VerificationCodeSend::ptr GetVerClient() { return ver_client_; }
+  void WakeUpEventFd();
 
  private:
   // 创建 eventfd，用于跨线程唤醒 epoll
@@ -185,7 +190,6 @@ class EventLoop {
   void HandleReadEventfd();
 
   // 向 eventfd 写入数据（唤醒阻塞中的 epoll）
-  void WakeUpEventFd();
 
   void ScheduleFlush();
 
@@ -196,6 +200,7 @@ class EventLoop {
   std::vector<Functor> task_queue_;         // 任务队列（线程安全）
   std::mutex mutex_;                        // 保护任务队列的互斥锁
   TimerWheel timer_wheel_;                  // 定时器容器
+  std::atomic<bool> quit_;
 
   std::shared_ptr<odb::core::database> mysql_client_;
   std::shared_ptr<sw::redis::Redis> redis_client_;
@@ -213,6 +218,7 @@ class EventLoop {
   Status::ptr redis_status_;
   Codes::ptr redis_codes_;
   OfflineMessage::ptr redis_message_;
+  OfflineApply::ptr redis_apply_;
 
   MessageCache::ptr message_cache_;
   uint64_t flush_timer_id_;

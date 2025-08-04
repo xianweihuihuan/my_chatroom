@@ -129,6 +129,7 @@ bool TimerWheel::HasTimer(uint64_t id) {
 EventLoop::EventLoop()
     : thread_id_(std::this_thread::get_id()),
       event_fd_(CreateEventFd()),
+      quit_(false),
       event_channel_(new Channel(this, event_fd_)),
       timer_wheel_(this) {
   event_channel_->SetReadCallback(
@@ -140,7 +141,8 @@ EventLoop::EventLoop()
 
 void EventLoop::Start() {
   LOG_INFO("事件循环开始...");
-  while (true) {
+  quit_ = false;
+  while (!quit_) {
     std::vector<Channel*> active_channels;
     poller_.Poll(&active_channels);
     for (auto& channel : active_channels) {
@@ -148,6 +150,11 @@ void EventLoop::Start() {
     }
     RunAllTasks();
   }
+}
+
+void EventLoop::Stop(){
+  quit_ = true;
+  WakeUpEventFd();
 }
 
 void EventLoop::RunAllTasks() {
@@ -249,6 +256,7 @@ EventLoop::EventLoop(const std::string& mysql_user,
                      const std::string& key)
     : thread_id_(std::this_thread::get_id()),
       event_fd_(CreateEventFd()),
+      quit_(false),
       event_channel_(new Channel(this, event_fd_)),
       timer_wheel_(this),
       mysql_client_(ODBFactory::Create(mysql_user,
@@ -274,11 +282,11 @@ EventLoop::EventLoop(const std::string& mysql_user,
       redis_codes_(std::make_shared<Codes>(redis_client_)),
       redis_status_(std::make_shared<Status>(redis_client_)),
       redis_message_(std::make_shared<OfflineMessage>(redis_client_)),
+      redis_apply_(std::make_shared<OfflineApply>(redis_client_)),
       message_cache_(
           std::make_shared<MessageCache>(redis_client_, message_table_)),
       flush_timer_id_(10000),
-      flush_interval_(5) {
-}
+      flush_interval_(5) {}
 
 void EventLoop::ScheduleFlush() {
   TimerAdd(flush_timer_id_, flush_interval_, [this]() {

@@ -8,7 +8,7 @@
 #include "logger.h"
 
 namespace Xianwei {
-#define BUFFER_DEFAULT_SIZE 4096
+#define BUFFER_DEFAULT_SIZE 1024 * 8
 class Buffer {
  public:
   Buffer() : buffer_(BUFFER_DEFAULT_SIZE), read_index_(0), write_index_(0) {}
