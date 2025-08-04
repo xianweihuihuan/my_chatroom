@@ -28,21 +28,20 @@ DEFINE_int32(port, 8085, "当前服务器监听端口");
 int main(int argc, char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  Xianwei::TcpServer sp(FLAGS_port, false, "", "","");
+  Xianwei::Socket sp;
+  bool ret = sp.CreateServer(FLAGS_port);
+  assert(ret);
   Xianwei::path = FLAGS_file_path;
-  sp.SetMysqlMessage(FLAGS_mysql_user, FLAGS_mysql_pswd, FLAGS_mysql_host,
-                     FLAGS_mysql_db, FLAGS_mysql_cset, FLAGS_mysql_port,
-                     FLAGS_mysql_pool_count);
-  sp.SetRedisMessage(FLAGS_redis_host, FLAGS_redis_port, FLAGS_redis_db,
-                     FLAGS_redis_keepalive);
-  sp.SetVerMessage(FLAGS_ver_username, FLAGS_ver_pswd);
-  sp.SetMessageCallback(Xianwei::OnMessage);
-  sp.SetThreadCount(10);
   mkdir(Xianwei::path.c_str(), 0775);
   if (Xianwei::path.back() != '/') {
     Xianwei::path += '/';
   }
-  sp.Start();
-
+  while(true){
+    int fd = sp.Accept();
+    if (fd > 0) {
+      std::thread th(std::bind(&Xianwei::OnMessage,fd));
+      th.detach();
+    }
+  }
   return 0;
 }
