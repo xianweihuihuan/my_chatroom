@@ -2,18 +2,21 @@
 #include <arpa/inet.h>
 #include <gflags/gflags.h>
 #include <openssl/err.h>
+#include <openssl/sha.h>
 #include <openssl/ssl.h>
 #include <sys/eventfd.h>
 #include <sys/sendfile.h>
 #include <termios.h>
 #include <unistd.h>
+#include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <regex>
-#include "Buffer.h"
-#include "Socket.h"
+#include "Connection.h"
 #include "chat.pb.h"
 #include "file.pb.h"
 
@@ -24,7 +27,6 @@
 #define Red "\033[0m\033[1;31m"
 
 Xianwei::Buffer buffer;
-SSL_CTX* ctx;
 bool ifrunning = true;
 int vcodefd;
 int selfefd;
@@ -34,6 +36,8 @@ bool vsuccess;
 bool groupsuccess;
 bool friendsuccess;
 bool selfsuccess;
+SSL_CTX* ctx;
+int sockfd;
 SSL* ssl;
 bool deletefriend = false;
 bool cancelgroup = false;
@@ -57,13 +61,81 @@ std::vector<Xianwei::UserInfo> friend_list;
 std::vector<Xianwei::GroupInfo> group_list;
 std::vector<Xianwei::MemberInfo> member_list;
 std::string now_sid;
+std::shared_ptr<Xianwei::EventLoop> loop;
+std::shared_ptr<Xianwei::Connection> conn;
+std::mutex sendlock;
+std::string sfile_dir = "/xianwei/file";
+std::shared_ptr<std::thread> heart;
+std::shared_ptr<std::thread> react;
+bool iflogin;
 namespace Xianwei {
+
+void ReturnChat() {
+  static std::atomic_bool alreadyReturned{false};
+  if (alreadyReturned.exchange(true))
+    return;
+  ifrunning = false;
+  if (heart) {
+    if (heart->joinable()) {
+      heart->join();
+    }
+  }
+  if (loop) {
+    loop->Stop();
+  }
+  if (react) {
+    if (react->joinable()) {
+      react->join();
+    }
+  }
+  OPENSSL_cleanup();
+  google::protobuf::ShutdownProtobufLibrary();
+}
+
+void SingleRe(int i) {
+  ReturnChat();
+  exit(0);
+}
+
 bool Check_nickname(const std::string& nickname) {
   return nickname.size() < 22;
 }
 
 bool Check_password(const std::string& password) {
   return (password.size() > 6 && password.size() < 15);
+}
+
+std::string sha256_file(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file)
+        throw std::runtime_error("无法打开文件");
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx)
+        throw std::runtime_error("无法创建 EVP_MD_CTX");
+
+    const EVP_MD* md = EVP_sha256();
+    if (EVP_DigestInit_ex(ctx, md, nullptr) != 1)
+        throw std::runtime_error("EVP_DigestInit_ex 失败");
+
+    char buffer[8192];
+    while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
+        if (EVP_DigestUpdate(ctx, buffer, file.gcount()) != 1)
+            throw std::runtime_error("EVP_DigestUpdate 失败");
+    }
+
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int length = 0;
+    if (EVP_DigestFinal_ex(ctx, hash, &length) != 1)
+        throw std::runtime_error("EVP_DigestFinal_ex 失败");
+
+    EVP_MD_CTX_free(ctx);
+
+    std::ostringstream oss;
+    for (unsigned int i = 0; i < length; ++i)
+        oss << std::hex << std::setw(2) << std::setfill('0') << (unsigned int)hash[i];
+
+    return oss.str();
 }
 
 bool Check_email(const std::string& address) {
@@ -77,24 +149,31 @@ void SendToServer(const std::string body) {
   int i = SSL_write(ssl, message.c_str(), message.size());
 }
 
-void Print() {
-  std::cout << "\033[0m\033[1;36m"
-            << "    __  ____  _____    _   __   __  ____  __   _  ____  _____  "
-               "  _   __"
-            << std::endl;
-  std::cout << "   / / / / / / /   |  / | / /   \\ \\/ / / / /  | |/ / / / /   "
-               "|  / | / /"
+// void SendToServer(const std::string body) {
+//   std::string message = std::to_string(body.size()) + "\r\n" + body;
+//   {
+//     std::unique_lock<std::mutex> mtx(sendlock);
+//     conn->SendB(message.c_str(), message.size());
+//   }
+// }
 
-            << std::endl;
-  std::cout << "  / /_/ / / / / /| | /  |/ /     \\  / / / /   |   / / / / /| "
-               "| /  |/ / "
-            << std::endl;
-  std::cout << " / __  / /_/ / ___ |/ /|  /      / / /_/ /   /   / /_/ / ___ "
-               "|/ /|  / "
-            << std::endl;
-  std::cout << "/_/ /_/\\____/_/  |_/_/ |_/      /_/\\____/   /_/|_\\____/_/  "
-               "|_/_/ |_/ "
-            << "\033[0m" << std::endl;
+void Heart() {
+  heart = std::make_shared<std::thread>([]() {
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::seconds(10));
+      Xianwei::ServerMessage req;
+      req.set_type(Xianwei::ServerMessageType::HeartType);
+      if (iflogin) {
+        Xianwei::SendToServer(req.SerializeAsString());
+      } else {
+        SendToServer(req.SerializeAsString());
+      }
+      if (!ifrunning) {
+        break;
+      }
+    }
+    OPENSSL_thread_stop();
+  });
 }
 
 void WakeUpEventFd(int event_fd) {
@@ -107,160 +186,9 @@ void WakeUpEventFd(int event_fd) {
 
 void ReadEventfd(int event_fd) {
   uint64_t one = 0;
-  ssize_t n = read(event_fd, &one, sizeof(one));
+  ssize_t n = read(event_fd, &one, sizeof(one));  // 这个逻辑是干啥的
   if (n != sizeof(one)) {
     LOG_ERROR("读取 eventfd 失败，应读 {} 字节，实际读了 {}", sizeof(one), n);
-  }
-}
-
-void UserRegister() {
-  std::string nickname;
-  std::string password;
-  std::string email;
-  std::cout << Yellow << "请输入你的昵称：";
-  std::cin >> nickname;
-  std::cout << Tail;
-  while (!Check_nickname(nickname)) {
-    nickname.clear();
-    std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
-    std::cin >> nickname;
-    std::cout << Tail;
-  }
-  std::cout << Yellow << "请输入密码(7~14位)：";
-  termios oldt{};
-  if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
-    perror("tcgetattr");
-    return;
-  }
-  termios newt = oldt;
-  newt.c_lflag &= ~ECHO;
-  if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0) {
-    perror("tcsetattr");
-    return;
-  }
-  std::cin >> password;
-  std::cout << Tail;
-  while (!Check_password(password)) {
-    password.clear();
-    std::cout << Red << "\n密码不在要求范围内，请重新输入：" << Tail << Yellow;
-    std::cin.clear();
-    std::cin >> password;
-    std::cout << Tail;
-  }
-  if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) != 0) {
-    perror("tcsetattr");
-    return;
-  }
-  std::cout << std::endl;
-  std::cout << Yellow << "请输入邮箱：";
-  std::cin >> email;
-  std::cout << Tail;
-  while (!Check_email(email)) {
-    email.clear();
-    std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
-    std::cin >> email;
-    std::cout << Tail;
-  }
-  Xianwei::ServerMessage req;
-  req.set_type(ServerMessageType::EmailVcodeReqType);
-  req.mutable_email_verify_code_req()->set_email(email);
-  SendToServer(req.SerializeAsString());
-  while (true) {
-    char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
-    buffer.WriteAndPush(buf, sz);
-    std::string lenLine = buffer.GetLine();
-    if (lenLine.empty()) {
-      continue;
-    }
-    int bodyLen = 0;
-    try {
-      bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
-    } catch (...) {
-      buffer.Clear();
-      return;
-    }
-    if (buffer.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
-      continue;
-    }
-    buffer.MoveReadIndex(lenLine.size());
-    std::string data = buffer.ReadAsStringAndPop(bodyLen);
-    ClientMessage msg;
-    if (!msg.ParseFromString(data)) {
-      continue;
-    }
-    if (msg.type() != ClientMessageType::EmailVcodeRspType) {
-      continue;
-    }
-    auto& vcode_rsp = msg.email_verify_code_rsp();
-    if (!vcode_rsp.success()) {
-      std::cout << Red << vcode_rsp.errmsg() << "退出" << Tail << std::endl;
-      return;
-    }
-    vid = vcode_rsp.verify_code_id();
-    break;
-  }
-  std::cout << Yellow << "请输入验证码：";
-  std::cin.clear();
-  std::cin >> vcode;
-  std::cout << Tail;
-  Xianwei::ServerMessage regreq;
-  regreq.set_type(ServerMessageType::UserRegisterReqType);
-  regreq.mutable_user_register_req()->set_nickname(nickname);
-  regreq.mutable_user_register_req()->set_password(password);
-  regreq.mutable_user_register_req()->set_email(email);
-  regreq.mutable_user_register_req()->set_verify_code_id(vid);
-  regreq.mutable_user_register_req()->set_verify_code(vcode);
-  SendToServer(regreq.SerializeAsString());
-  while (true) {
-    char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
-    buffer.WriteAndPush(buf, sz);
-    std::string lenLine = buffer.GetLine();
-    if (lenLine.empty()) {
-      continue;
-    }
-    int bodyLen = 0;
-    try {
-      bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
-    } catch (...) {
-      buffer.Clear();
-      return;
-    }
-    if (buffer.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
-      continue;
-    }
-    buffer.MoveReadIndex(lenLine.size());
-    std::string data = buffer.ReadAsStringAndPop(bodyLen);
-    ClientMessage regmsg;
-    if (!regmsg.ParseFromString(data)) {
-      continue;
-    }
-    if (regmsg.type() != ClientMessageType::UserRegisterRspType) {
-      continue;
-    }
-    auto& rsp = regmsg.user_register_rsp();
-    if (rsp.success()) {
-      std::cout << Green << "注册成功" << Tail << std::endl;
-      vid.clear();
-      vcode.clear();
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-    } else {
-      if (rsp.errmsg() == "验证码错误") {
-        vcode.clear();
-        std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
-        std::cin.clear();
-        std::cin >> vcode;
-        std::cout << Tail;
-        regreq.mutable_user_register_req()->set_verify_code(vcode);
-        SendToServer(regreq.SerializeAsString());
-        continue;
-      } else {
-        std::cout << Red << rsp.errmsg() << "，失败退出\n" << Tail;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      }
-    }
-    break;
   }
 }
 
@@ -531,7 +459,6 @@ void HandleMessage(const ClientMessage& msg) {
                     << std::endl;
         }
       }
-      // WakeUpEventFd(friendefd);
       break;
     case ClientMessageType::FriendMessageNoticeType: {
       std::unique_lock<std::mutex> mtx(iolock);
@@ -541,10 +468,10 @@ void HandleMessage(const ClientMessage& msg) {
       }
       printf("[%10s]", msg.friend_message_notice().friend_name().c_str());
       if (msg.friend_message_notice().message_type() == MessageType::file) {
-        printf("[文件]:%s", msg.friend_message_notice().body().c_str());
+        printf("[文件]:%s\n", msg.friend_message_notice().body().c_str());
       } else if (msg.friend_message_notice().message_type() ==
                  MessageType::string) {
-        printf("[消息]:%s", msg.friend_message_notice().body().c_str());
+        printf("[消息]:%s\n", msg.friend_message_notice().body().c_str());
       }
       std::cout << Tail << std::endl;
     } break;
@@ -982,41 +909,237 @@ void HandleMessage(const ClientMessage& msg) {
       }
       WakeUpEventFd(selfefd);
       break;
+    case ClientMessageType::SovelFriendApplyNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "[通知]：你对"
+                << msg.sovel_friend_apply_notice().user_name()
+                << "的好友申请已被";
+      if (msg.sovel_friend_apply_notice().agree()) {
+        std::cout << "同意" << Tail << std::endl;
+      } else {
+        std::cout << "拒绝" << Tail << std::endl;
+      }
+    } break;
+    case ClientMessageType::SovelGroupApplyNoticeType: {
+      std::unique_lock<std::mutex> mtx(iolock);
+      std::cout << Yellow << "[通知]：你对群聊"
+                << msg.sovel_group_apply_notice().name() << "的入群申请已被";
+      if (msg.sovel_group_apply_notice().agree()) {
+        std::cout << "同意" << Tail << std::endl;
+      } else {
+        std::cout << "拒绝" << Tail << std::endl;
+      }
+    } break;
+  }
+  // std::this_thread::sleep_for(std::chrono::milliseconds(3));
+}
+
+void Recv(const PtrConnection& conn, Buffer* buf) {
+  // 处理所有完整消息
+  while (true) {
+    std::string lenLine = buf->GetLine();
+    if (lenLine.empty())
+      break;
+    int bodyLen = 0;
+    try {
+      bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+    } catch (...) {
+      buf->Clear();
+      break;
+    }
+    if (buf->ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen))
+      break;
+    buf->MoveReadIndex(lenLine.size());
+
+    std::string data = buf->ReadAsStringAndPop(bodyLen);
+    ClientMessage msg;
+    if (!msg.ParseFromString(data))
+      continue;
+    HandleMessage(msg);
   }
 }
 
-void Recv() {
-  char buf[10000];
-  while (running) {
+void React() {
+  react = std::make_shared<std::thread>([]() {
+    loop = std::make_shared<EventLoop>();
+    conn = std::make_shared<Connection>(loop.get(), 42, sockfd, ctx, ssl);
+    // conn = std::make_shared<Connection>(loop.get(), 42, sockfd, nullptr,
+    // false);
+    conn->SetMessageCallback(Recv);
+    conn->Established();
+    loop->Start();
+    OPENSSL_thread_stop();
+  });
+}
+
+void Print() {
+  std::cout << "\033[0m\033[1;36m"
+            << "    __  ____  _____    _   __   __  ____  __   _  ____  _____  "
+               "  _   __"
+            << std::endl;
+  std::cout << "   / / / / / / /   |  / | / /   \\ \\/ / / / /  | |/ / / / /   "
+               "|  / | / /"
+
+            << std::endl;
+  std::cout << "  / /_/ / / / / /| | /  |/ /     \\  / / / /   |   / / / / /| "
+               "| /  |/ / "
+            << std::endl;
+  std::cout << " / __  / /_/ / ___ |/ /|  /      / / /_/ /   /   / /_/ / ___ "
+               "|/ /|  / "
+            << std::endl;
+  std::cout << "/_/ /_/\\____/_/  |_/_/ |_/      /_/\\____/   /_/|_\\____/_/  "
+               "|_/_/ |_/ "
+            << "\033[0m" << std::endl;
+}
+
+void UserRegister() {
+  std::string nickname;
+  std::string password;
+  std::string email;
+  std::cout << Yellow << "请输入你的昵称：";
+  std::cin >> nickname;
+  std::cout << Tail;
+  while (!Check_nickname(nickname)) {
+    nickname.clear();
+    std::cout << Red << "用户名过长，请重新输入：" << Tail << Yellow;
+    std::cin >> nickname;
+    std::cout << Tail;
+  }
+  std::cout << Yellow << "请输入密码(7~14位)：";
+  termios oldt{};
+  if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+    perror("tcgetattr");
+    return;
+  }
+  termios newt = oldt;
+  newt.c_lflag &= ~ECHO;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
+  std::cin >> password;
+  std::cout << Tail;
+  while (!Check_password(password)) {
+    password.clear();
+    std::cout << Red << "\n密码不在要求范围内，请重新输入：" << Tail << Yellow;
+    std::cin.clear();
+    std::cin >> password;
+    std::cout << Tail;
+  }
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
+  std::cout << std::endl;
+  std::cout << Yellow << "请输入邮箱：";
+  std::cin >> email;
+  std::cout << Tail;
+  while (!Check_email(email)) {
+    email.clear();
+    std::cout << Red << "邮箱不合法，请重新输入：" << Tail << Yellow;
+    std::cin >> email;
+    std::cout << Tail;
+  }
+  Xianwei::ServerMessage req;
+  req.set_type(ServerMessageType::EmailVcodeReqType);
+  req.mutable_email_verify_code_req()->set_email(email);
+  SendToServer(req.SerializeAsString());
+  while (true) {
+    char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
-    if (sz <= 0) {
-      // 连接断开或出错
-      std::cout << "服务器断开连接或读取出错" << std::endl;
-      running = false;
-      break;
-    }
     buffer.WriteAndPush(buf, sz);
-    // 处理所有完整消息
-    while (true) {
-      std::string lenLine = buffer.GetLine();
-      if (lenLine.empty())
-        break;
-      int bodyLen = 0;
-      try {
-        bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
-      } catch (...) {
-        buffer.Clear();
-        break;
-      }
-      if (buffer.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen))
-        break;
-      buffer.MoveReadIndex(lenLine.size());
-      std::string data = buffer.ReadAsStringAndPop(bodyLen);
-      ClientMessage msg;
-      if (!msg.ParseFromString(data))
-        continue;
-      HandleMessage(msg);
+    std::string lenLine = buffer.GetLine();
+    if (lenLine.empty()) {
+      continue;
     }
+    int bodyLen = 0;
+    try {
+      bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+    } catch (...) {
+      buffer.Clear();
+      return;
+    }
+    if (buffer.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+      continue;
+    }
+    buffer.MoveReadIndex(lenLine.size());
+    std::string data = buffer.ReadAsStringAndPop(bodyLen);
+    ClientMessage msg;
+    if (!msg.ParseFromString(data)) {
+      continue;
+    }
+    if (msg.type() != ClientMessageType::EmailVcodeRspType) {
+      continue;
+    }
+    auto& vcode_rsp = msg.email_verify_code_rsp();
+    if (!vcode_rsp.success()) {
+      std::cout << Red << vcode_rsp.errmsg() << "退出" << Tail << std::endl;
+      return;
+    }
+    vid = vcode_rsp.verify_code_id();
+    break;
+  }
+  std::cout << Yellow << "请输入验证码：";
+  std::cin.clear();
+  std::cin >> vcode;
+  std::cout << Tail;
+  Xianwei::ServerMessage regreq;
+  regreq.set_type(ServerMessageType::UserRegisterReqType);
+  regreq.mutable_user_register_req()->set_nickname(nickname);
+  regreq.mutable_user_register_req()->set_password(password);
+  regreq.mutable_user_register_req()->set_email(email);
+  regreq.mutable_user_register_req()->set_verify_code_id(vid);
+  regreq.mutable_user_register_req()->set_verify_code(vcode);
+  SendToServer(regreq.SerializeAsString());
+  while (true) {
+    char buf[10000];
+    int sz = SSL_read(ssl, buf, sizeof(buf));
+    buffer.WriteAndPush(buf, sz);
+    std::string lenLine = buffer.GetLine();
+    if (lenLine.empty()) {
+      continue;
+    }
+    int bodyLen = 0;
+    try {
+      bodyLen = std::stoi(lenLine.substr(0, lenLine.size() - 2));
+    } catch (...) {
+      buffer.Clear();
+      return;
+    }
+    if (buffer.ReadAbleSize() < lenLine.size() + static_cast<size_t>(bodyLen)) {
+      continue;
+    }
+    buffer.MoveReadIndex(lenLine.size());
+    std::string data = buffer.ReadAsStringAndPop(bodyLen);
+    ClientMessage regmsg;
+    if (!regmsg.ParseFromString(data)) {
+      continue;
+    }
+    if (regmsg.type() != ClientMessageType::UserRegisterRspType) {
+      continue;
+    }
+    auto& rsp = regmsg.user_register_rsp();
+    if (rsp.success()) {
+      std::cout << Green << "注册成功" << Tail << std::endl;
+      vid.clear();
+      vcode.clear();
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    } else {
+      if (rsp.errmsg() == "验证码错误") {
+        vcode.clear();
+        std::cout << Red << "验证码错误，请重新输入：" << Tail << Yellow;
+        std::cin.clear();
+        std::cin >> vcode;
+        std::cout << Tail;
+        regreq.mutable_user_register_req()->set_verify_code(vcode);
+        SendToServer(regreq.SerializeAsString());
+        continue;
+      } else {
+        std::cout << Red << rsp.errmsg() << "，失败退出\n" << Tail;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+      }
+    }
+    break;
   }
 }
 
@@ -1107,6 +1230,7 @@ void UpdateEmail() {
     std::cout << Yellow << "请输入验证码\n";
     std::cout << Tail;
   }
+
   std::cin >> vcode;
   ServerMessage sreq;
   sreq.set_type(ServerMessageType::SetEmailReqType);
@@ -1144,6 +1268,17 @@ void UpdatePassword() {
     std::cout << Yellow << "请输入你的新密码(7~14位)\n";
     std::cout << Tail;
   }
+  termios oldt{};
+  if (tcgetattr(STDIN_FILENO, &oldt) != 0) {
+    perror("tcgetattr");
+    return;
+  }
+  termios newt = oldt;
+  newt.c_lflag &= ~ECHO;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
   std::cin >> password;
   while (!Check_password(password)) {
     password.clear();
@@ -1154,6 +1289,11 @@ void UpdatePassword() {
     }
     std::cin >> password;
   }
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) != 0) {
+    perror("tcsetattr");
+    return;
+  }
+  std::cout << std::endl;
   std::string ensure;
   {
     std::unique_lock<std::mutex> mtx(iolock);
@@ -1486,18 +1626,19 @@ void SendString(const int& num) {
   std::cout << Cyan << "输入quit以结束\n" << Tail;
   while (true) {
     body.clear();
-    std::getline(std::cin, body);
+    auto tme = req.mutable_friend_send_message_req()->mutable_message();
+    tme->set_message_type(MessageType::string);
+    if (!std::getline(std::cin, body)) {
+      break;
+    }
     if (body == "quit") {
       break;
     }
     if (body.empty()) {
       continue;
     }
-    auto tme = req.mutable_friend_send_message_req()->mutable_message();
-    tme->set_message_type(MessageType::string);
     tme->set_body(body);
     SendToServer(req.SerializeAsString());
-    // ReadEventfd(friendefd);
     if (deletefriend) {
       return;
     }
@@ -1561,26 +1702,32 @@ void Message(const int& num) {
 }
 
 void FriendSendFile(const int& num) {
+  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
   std::string file_name;
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Cyan << "请输入你要上传的文件\n" << Tail;
   }
-  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
   std::getline(std::cin, file_name);
-  while (!std::filesystem::exists(file_name)) {
+  std::string file = sfile_dir + file_name;
+  while (!std::filesystem::exists(file) ||
+         !std::filesystem::is_regular_file(file)) {
+    file.clear();
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "文件不存在，请重新输入\n" << Tail;
     }
     std::getline(std::cin, file_name);
+    file = sfile_dir + file_name;
   }
-  std::filesystem::path p(file_name);
+  std::string file_num = sha256_file(file);
+  std::filesystem::path p(file);
   ServerMessage req;
   req.set_type(ServerMessageType::FriendSendFileReqType);
   req.mutable_friend_send_file_req()->set_user_id(uid);
   req.mutable_friend_send_file_req()->set_peer_id(
       friend_list[num - 1].user_id());
+  req.mutable_friend_send_file_req()->set_file_sum(file_num);
   req.mutable_friend_send_file_req()->set_file_name(p.filename().string());
   SendToServer(req.SerializeAsString());
   std::string tmp_file_id;
@@ -1627,7 +1774,7 @@ void FriendSendFile(const int& num) {
   } else {
     ifcontinue = false;
   }
-  std::thread send_file([file_name, tmp_file_id, ifcontinue, num, p]() {
+  std::thread send_file([file, tmp_file_id, ifcontinue, num, p]() {
     Socket fs;
     fs.CreateClient(file_port, file_ip);
     FileServer req;
@@ -1678,17 +1825,17 @@ void FriendSendFile(const int& num) {
         return;
       } else {
         auto sz = rsp.file_sz();
-        auto tsz = std::filesystem::file_size(file_name);
-        int file_fd = open(file_name.c_str(), O_RDONLY);
+        auto tsz = std::filesystem::file_size(file);
+        int file_fd = open(file.c_str(), O_RDONLY);
         if (file_fd == -1) {
           {
             std::unique_lock<std::mutex> mtx(iolock);
-            std::cout << Red << "打开文件失败：" << file_name << Tail
-                      << std::endl;
+            std::cout << Red << "打开文件失败：" << file << Tail << std::endl;
           }
           fs.Close();
           return;
         }
+        std::cout << sz << std::endl;
         size_t step = 60000;
         off_t offset = sz;
         while (offset < tsz) {
@@ -1696,6 +1843,11 @@ void FriendSendFile(const int& num) {
                                 tsz - offset);  // 计算剩余数据大小
           ssize_t ret =
               sendfile(fs.Fd(), file_fd, &offset, count);  // 发送文件部分
+          if (!ifrunning) {
+            close(file_fd);
+            fs.Close();
+            return;
+          }
           if (ret == -1) {
             if (errno == EAGAIN || errno == EINTR) {
               continue;
@@ -1704,7 +1856,9 @@ void FriendSendFile(const int& num) {
               std::unique_lock<std::mutex> mtx(iolock);
               std::cout << Red << "发送文件出错" << std::endl << Tail;
             }
-            break;
+            close(file_fd);
+            fs.Close();
+            return;
           }
         }
         {
@@ -2031,6 +2185,7 @@ void DelSelf() {
       req.mutable_user_del_self_req()->set_user_id(uid);
       SendToServer(req.SerializeAsString());
       ReadEventfd(selfefd);
+      ReturnChat();
       exit(0);
     }
     agree.clear();
@@ -2148,13 +2303,6 @@ void CreateGroup() {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Yellow << "请继续输入：\n" << Tail;
     }
-  }
-  if (member_uid_list.empty()) {
-    {
-      std::unique_lock<std::mutex> mtx(iolock);
-      std::cout << Red << "群聊成员不能为空\n" << Tail;
-    }
-    return;
   }
   for (const auto& n : member_uid_list) {
     req.mutable_create_group_req()->add_member_id(n);
@@ -2589,20 +2737,25 @@ void GroupSendString(const int& num) {
 
 void GroupSendFile(const int& num) {
   std::string file_name;
+  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
   {
     std::unique_lock<std::mutex> mtx(iolock);
     std::cout << Cyan << "请输入你要上传的文件\n" << Tail;
   }
-  std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
   std::getline(std::cin, file_name);
-  while (!std::filesystem::exists(file_name)) {
+  std::string file = sfile_dir + file_name;
+  while (!std::filesystem::exists(file) ||
+         !std::filesystem::is_regular_file(file)) {
+    // std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    file.clear();
     {
       std::unique_lock<std::mutex> mtx(iolock);
       std::cout << Red << "文件不存在，请重新输入\n" << Tail;
     }
     std::getline(std::cin, file_name);
+    file = sfile_dir + file_name;
   }
-  std::filesystem::path p(file_name);
+  std::filesystem::path p(file);
   ServerMessage req;
   req.set_type(ServerMessageType::GroupSendFileReqType);
   req.mutable_group_send_file_req()->set_user_id(uid);
@@ -2654,7 +2807,7 @@ void GroupSendFile(const int& num) {
   } else {
     ifcontinue = false;
   }
-  std::thread send_file([file_name, tmp_file_id, ifcontinue, num, p]() {
+  std::thread send_file([file, tmp_file_id, ifcontinue, num, p]() {
     Socket fs;
     fs.CreateClient(file_port, file_ip);
     FileServer req;
@@ -2705,24 +2858,29 @@ void GroupSendFile(const int& num) {
         return;
       } else {
         auto sz = rsp.file_sz();
-        auto tsz = std::filesystem::file_size(file_name);
-        int file_fd = open(file_name.c_str(), O_RDONLY);
+        auto tsz = std::filesystem::file_size(file);
+        int file_fd = open(file.c_str(), O_RDONLY);
         if (file_fd == -1) {
           {
             std::unique_lock<std::mutex> mtx(iolock);
-            std::cout << Red << "打开文件失败：" << file_name << Tail
-                      << std::endl;
+            std::cout << Red << "打开文件失败：" << file << Tail << std::endl;
           }
           fs.Close();
           return;
         }
         size_t step = 60000;
         off_t offset = sz;
+        bool sss = true;
         while (offset < tsz) {
           auto count = std::min(step,
                                 tsz - offset);  // 计算剩余数据大小
           ssize_t ret =
               sendfile(fs.Fd(), file_fd, &offset, count);  // 发送文件部分
+          if (!ifrunning) {
+            close(file_fd);
+            fs.Close();
+            return;
+          }
           if (ret == -1) {
             if (errno == EAGAIN || errno == EINTR) {
               continue;
@@ -2731,7 +2889,9 @@ void GroupSendFile(const int& num) {
               std::unique_lock<std::mutex> mtx(iolock);
               std::cout << Red << "发送文件出错" << std::endl << Tail;
             }
-            break;
+            close(file_fd);
+            fs.Close();
+            return;
           }
         }
         {
@@ -2848,6 +3008,11 @@ void GroupGetFile(const int& num) {
         std::ofstream out;
         out.open(file_dir + file_name,
                  std::ios::out | std::ios::trunc | std::ios::binary);
+        size_t rem = buf.ReadAbleSize();
+        if (rem > 0) {
+          std::string leftover = buf.ReadAsStringAndPop(rem);
+          out.write(leftover.data(), leftover.size());
+        }
         while (true) {
           ssize_t sz = fg.Recv(buff, sizeof(buff));
           if (sz == 0) {
@@ -3117,7 +3282,8 @@ void Menu() {
         about();
         break;
       case 4:
-        ifrunning = false;
+        // ifrunning = false;
+        ReturnChat();
         return;
       default: {
         {
@@ -3178,6 +3344,7 @@ void UserLogin() {
   while (true) {
     char buf[10000];
     int sz = SSL_read(ssl, buf, sizeof(buf));
+    // int sz = recv(sockfd, buf, sizeof(buf), 0);
     buffer.WriteAndPush(buf, sz);
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
@@ -3225,11 +3392,28 @@ void UserLogin() {
           printf("[消息]:%s\n", rsp.session(i).body().c_str());
         }
       }
+      for (int i = 0; i < rsp.friend_sovel_size(); ++i) {
+        std::cout << Yellow << "[通知]：你对" << rsp.friend_sovel(i).name()
+                  << "的好友申请已被";
+        if (rsp.friend_sovel(i).agree()) {
+          std::cout << "同意" << Tail << std::endl;
+        } else {
+          std::cout << "拒绝" << Tail << std::endl;
+        }
+      }
+      for (int i = 0; i < rsp.group_sovel_size(); ++i) {
+        std::cout << Yellow << "[通知]：你对群聊" << rsp.group_sovel(i).name()
+                  << "的入群申请已被";
+        if (rsp.group_sovel(i).agree()) {
+          std::cout << "同意" << Tail << std::endl;
+        } else {
+          std::cout << "拒绝" << Tail << std::endl;
+        }
+      }
       std::cout << Tail;
-      std::thread recv(Recv);
-      recv.detach();
+      React();
+      iflogin = true;
       Menu();
-      // std::this_thread::sleep_for(std::chrono::seconds(10));
     } else {
       std::cout << Red << rsp.errmsg() << "，失败退出\n" << Tail;
       std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -3351,20 +3535,28 @@ void EmailLogin() {
           printf("[消息]:%s\n", rsp.session(i).body().c_str());
         }
       }
+      for (int i = 0; i < rsp.friend_sovel_size(); ++i) {
+        std::cout << Yellow << "[通知]：你对" << rsp.friend_sovel(i).name()
+                  << "的好友申请已被";
+        if (rsp.friend_sovel(i).agree()) {
+          std::cout << "同意" << Tail << std::endl;
+        } else {
+          std::cout << "拒绝" << Tail << std::endl;
+        }
+      }
+      for (int i = 0; i < rsp.group_sovel_size(); ++i) {
+        std::cout << Yellow << "[通知]：你对群聊" << rsp.friend_sovel(i).name()
+                  << "的入群申请已被";
+        if (rsp.group_sovel(i).agree()) {
+          std::cout << "同意" << Tail << std::endl;
+        } else {
+          std::cout << "拒绝" << Tail << std::endl;
+        }
+      }
       std::cout << Tail;
       std::string start;
-      std::cout << Yellow << "输入chat以开始：";
-      std::cin.clear();
-      std::cin >> start;
-      std::cout << Tail;
-      while (start != "chat") {
-        start.clear();
-        std::cout << Red << "请重新输入：" << Tail << Yellow;
-        std::cin.clear();
-        std::cin >> start;
-      }
-      std::thread recv(Recv);
-      recv.detach();
+      React();
+      iflogin = true;
       Menu();
     } else {
       if (rsp.errmsg() == "验证码错误") {

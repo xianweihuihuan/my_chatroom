@@ -14,8 +14,8 @@ DEFINE_int32(file_port, 8085, "文件服务器监听端口");
 DEFINE_string(file_dir, "./file_data", "本地文件储存目录");
 
 int main(int argc, char* argv[]) {
-  Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
   google::ParseCommandLineFlags(&argc, &argv, true);
+  Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
   // 1. 初始化 OpenSSL
   SSL_library_init();
   SSL_load_error_strings();
@@ -39,8 +39,16 @@ int main(int argc, char* argv[]) {
   Xianwei::Socket so;
   so.CreateClient(FLAGS_server_port, FLAGS_server_ip);
   // 4. 绑定 SSL 并握手
+  int buf_size = 1024 * 1024;  // 1MB
+  if (setsockopt(so.Fd(), SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) <
+      0)
+    perror("setsockopt SO_SNDBUF failed");
+  if (setsockopt(so.Fd(), SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size)) <
+      0)
+    perror("setsockopt SO_RCVBUF failed");
   ssl = SSL_new(ctx);
   SSL_set_fd(ssl, so.Fd());
+  sockfd = so.Fd();
   if (SSL_connect(ssl) != 1) {
     LOG_ERROR("SSL连接失败");
     ERR_print_errors_fp(stderr);
@@ -50,24 +58,18 @@ int main(int argc, char* argv[]) {
   selfefd = eventfd(0, EFD_CLOEXEC);
   friendefd = eventfd(0, EFD_CLOEXEC);
   groupefd = eventfd(0, EFD_CLOEXEC);
-  std::thread heart([]() {
-    while (true) {
-      Xianwei::ServerMessage req;
-      req.set_type(Xianwei::ServerMessageType::HeartType);
-      Xianwei::SendToServer(req.SerializeAsString());
-      std::this_thread::sleep_for(std::chrono::seconds(10));
-    }
-  });
-  heart.detach();
+  iflogin = false;
+  signal(SIGINT, Xianwei::SingleRe);
+  Xianwei::Heart();
   Xianwei::Print();
   std::cout << Yellow << "输入”start“以开始：";
   std::string ifstart;
   std::cout << Tail;
   while (true) {
-    if (!std::getline(std::cin,ifstart)){
+    if (!std::getline(std::cin, ifstart)) {
       return 0;
     }
-    if(ifstart == "start"){
+    if (ifstart == "start") {
       break;
     }
     std::cout << Red << "未知操作，请重新输入：" << Yellow;
