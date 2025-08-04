@@ -54,7 +54,8 @@ int main(int argc, char* argv[]) {
                      FLAGS_redis_keepalive);
   sp.SetVerMessage(FLAGS_ver_username, FLAGS_ver_pswd);
   sp.SetThreadCount(10);
-  sp.EnableInactiveRelease(30);
+  sp.EnableInactiveRelease(300);
+  Xianwei::task_pool = std::make_shared<Xianwei::thread_pool>(30);
   std::thread flush([]() {
     while (true) {
       std::this_thread::sleep_for(std::chrono::seconds(5));
