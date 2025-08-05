@@ -27,7 +27,7 @@ uint32_t TimerTask::DelayTime() {
 
 TimerWheel::TimerWheel(EventLoop* loop)
     : tick_(0),
-      capacity_(60),
+      capacity_(600),
       wheel_(capacity_),
       loop_(loop),
       timerfd_(CreateTimerfd()),
@@ -152,7 +152,7 @@ void EventLoop::Start() {
   }
 }
 
-void EventLoop::Stop(){
+void EventLoop::Stop() {
   quit_ = true;
   WakeUpEventFd();
 }
@@ -282,16 +282,6 @@ EventLoop::EventLoop(const std::string& mysql_user,
       redis_codes_(std::make_shared<Codes>(redis_client_)),
       redis_status_(std::make_shared<Status>(redis_client_)),
       redis_message_(std::make_shared<OfflineMessage>(redis_client_)),
-      redis_apply_(std::make_shared<OfflineApply>(redis_client_)),
-      message_cache_(
-          std::make_shared<MessageCache>(redis_client_, message_table_)),
-      flush_timer_id_(10000),
-      flush_interval_(5) {}
+      redis_apply_(std::make_shared<OfflineApply>(redis_client_)) {}
 
-void EventLoop::ScheduleFlush() {
-  TimerAdd(flush_timer_id_, flush_interval_, [this]() {
-    message_cache_->Flush();
-    ScheduleFlush();
-  });
-}
 }  // namespace Xianwei

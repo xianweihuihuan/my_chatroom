@@ -177,7 +177,6 @@ class EventLoop {
   Codes::ptr GetCodes() { return redis_codes_; }
   OfflineMessage::ptr GetOfflineMessage() { return redis_message_; }
   OfflineApply::ptr GetOfflineApply() { return redis_apply_; }
-  MessageCache::ptr GetMessageCache() { return message_cache_; }
 
   VerificationCodeSend::ptr GetVerClient() { return ver_client_; }
   void WakeUpEventFd();
@@ -190,8 +189,6 @@ class EventLoop {
   void HandleReadEventfd();
 
   // 向 eventfd 写入数据（唤醒阻塞中的 epoll）
-
-  void ScheduleFlush();
 
   std::thread::id thread_id_;               // 创建该 EventLoop 的线程 ID
   int event_fd_;                            // eventfd，用于跨线程唤醒
@@ -220,9 +217,7 @@ class EventLoop {
   OfflineMessage::ptr redis_message_;
   OfflineApply::ptr redis_apply_;
 
-  MessageCache::ptr message_cache_;
-  uint64_t flush_timer_id_;
-  uint32_t flush_interval_;
+
 };
 
 }  // namespace Xianwei

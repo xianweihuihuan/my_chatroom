@@ -3,27 +3,14 @@
 
 namespace Xianwei {
 
-Connection::Connection(EventLoop* loop,
-                       uint64_t conn_id,
-                       int sockfd,
-                       SSL_CTX* ctx,
-                       bool enable_ssl)
+Connection::Connection(EventLoop* loop, uint64_t conn_id, int sockfd)
     : conn_id_(conn_id),
       sockfd_(sockfd),
       enable_inactive_release_(false),
       loop_(loop),
       status_(CONNECTING),
       socket_(sockfd),
-      channel_(loop, sockfd),
-      ssl_ctx_(ctx),
-      ssl_(nullptr),
-      enable_ssl_(enable_ssl) {
-  socket_.NonBlock();
-  if (enable_ssl_) {
-    ssl_ = SSL_new(ssl_ctx_);
-    SSL_set_fd(ssl_, sockfd_);
-    SSL_set_accept_state(ssl_);
-  }
+      channel_(loop, sockfd) {
   channel_.SetCloseCallback([this]() { HandleClose(); });
   channel_.SetEventCallback([this]() { HandleEvent(); });
   channel_.SetReadCallback([this]() { HandleRead(); });
@@ -31,32 +18,30 @@ Connection::Connection(EventLoop* loop,
   channel_.SetErrorCallback([this]() { HandleError(); });
 }
 
-Connection::Connection(EventLoop* loop,
-                       uint64_t conn_id,
-                       int sockfd,
-                       SSL_CTX* ctx,
-                       SSL* ssl)
-    : conn_id_(conn_id),
-      sockfd_(sockfd),
-      enable_inactive_release_(false),
-      loop_(loop),
-      status_(CONNECTING),
-      socket_(sockfd),
-      channel_(loop, sockfd),
-      ssl_ctx_(ctx),
-      ssl_(ssl),
-      enable_ssl_(true) {
-  socket_.NonBlock();
-  channel_.SetCloseCallback([this]() { HandleClose(); });
-  channel_.SetEventCallback([this]() { HandleEvent(); });
-  channel_.SetReadCallback([this]() { HandleRead(); });
-  channel_.SetWriteCallback([this]() { HandleWrite(); });
-  channel_.SetErrorCallback([this]() { HandleError(); });
-}
+// Connection::Connection(EventLoop* loop,
+//                        uint64_t conn_id,
+//                        int sockfd,
+//                        SSL_CTX* ctx,
+//                        SSL* ssl)
+//     : conn_id_(conn_id),
+//       sockfd_(sockfd),
+//       enable_inactive_release_(false),
+//       loop_(loop),
+//       status_(CONNECTING),
+//       socket_(sockfd),
+//       channel_(loop, sockfd),
+//       ssl_ctx_(ctx),
+//       ssl_(ssl),
+//       enable_ssl_(true) {
+//   socket_.NonBlock();
+//   channel_.SetCloseCallback([this]() { HandleClose(); });
+//   channel_.SetEventCallback([this]() { HandleEvent(); });
+//   channel_.SetReadCallback([this]() { HandleRead(); });
+//   channel_.SetWriteCallback([this]() { HandleWrite(); });
+//   channel_.SetErrorCallback([this]() { HandleError(); });
+// }
 
-Connection::~Connection() {
-  FreeSSL();
-}
+Connection::~Connection() {}
 
 int Connection::Fd() const {
   return sockfd_;
@@ -89,121 +74,46 @@ void Connection::Established() {
 }
 
 void Connection::EstablishedInLoop() {
-  // assert(status_ == CONNECTING);
-  // status_ = CONNECTED;
-  // channel_.EnableRead();
-  // if (connected_cb_)
-  //   connected_cb_(shared_from_this());
   assert(status_ == CONNECTING);
-  // 不立刻标记 CONNECTED，也不回调 connected_cb_
-  // 而是开启异步 TLS 握手流程
-  if (enable_ssl_) {
-    DoHandshake();
-  } else {
-    status_ = CONNECTED;
-    channel_.EnableRead();
-    if (connected_cb_) {
-      connected_cb_(shared_from_this());
-    }
+
+  status_ = CONNECTED;
+  channel_.EnableRead();
+  if (connected_cb_) {
+    connected_cb_(shared_from_this());
   }
 }
 
 void Connection::HandleRead() {
-  if (status_ == CONNECTING && enable_ssl_) {
-    DoHandshake();
-    return;
+  char buf[65535];
+  ssize_t ret = socket_.NonBlockRecv(buf, 65535);
+  if (ret < 0) {
+    return ShutdownInLoop();
   }
-  char buf[65536];
-  if (enable_ssl_) {
-    ssize_t ret = SSL_read(ssl_, buf, sizeof(buf));  // 是通过这里读取的数据？
-    if (ret > 0) {
-      input_buffer_.WriteAndPush(buf, ret);
-      if (input_buffer_.ReadAbleSize() > 0 && message_cb_)
-        message_cb_(shared_from_this(), &input_buffer_);
-      return;
+  input_buffer_.WriteAndPush(buf, ret);
+  if (input_buffer_.ReadAbleSize() > 0) {
+    if (message_cb_) {
+      return message_cb_(shared_from_this(), &input_buffer_);
     }
-    int err = SSL_get_error(ssl_, ret);
-    if (err == SSL_ERROR_WANT_READ) {
-      channel_.EnableRead();
-    } else if (err == SSL_ERROR_WANT_WRITE) {
-      channel_.EnableWrite();
-    } else if (err == SSL_ERROR_ZERO_RETURN) {
-      ShutdownInLoop();
-    } else {
-      ShutdownInLoop();
-    }
-  } else {
-    ssize_t ret = socket_.NonBlockRecv(buf, sizeof(buf));
-    if (ret > 0) {
-      input_buffer_.WriteAndPush(buf, ret);
-      if (input_buffer_.ReadAbleSize() > 0 && message_cb_) {
-        message_cb_(shared_from_this(), &input_buffer_);
-      }
-      return;
-    }
-    if (ret == 0) {
-      ShutdownInLoop();
-      return;
-    }
-    if (errno == EAGAIN || errno == EINTR) {
-      return;
-    }
-    ShutdownInLoop();
   }
 }
 
 void Connection::HandleWrite() {
-  if (status_ == CONNECTING && enable_ssl_) {
-    DoHandshake();
-    return;
-  }
-  size_t total = output_buffer_.ReadAbleSize();
-  size_t sent = 0;
-  if (enable_ssl_) {
-    while (sent < total) {
-      int n =
-          SSL_write(ssl_, output_buffer_.ReadPosition() + sent, total - sent);
-      if (n > 0) {
-        sent += n;
-        continue;
-      }
-      int err = SSL_get_error(ssl_, n);
-      if (err == SSL_ERROR_WANT_WRITE) {
-        channel_.EnableWrite();
-        return;
-      }
-      if (n == 0) {
-        std::cout << "n == 0" << std::endl;
-        exit(1);
-      }
-      // 其他情况均视为错误，关闭连接
-      Release();
-      return;
+  ssize_t ret = socket_.NonBlockSend(output_buffer_.ReadPosition(),
+                                     output_buffer_.ReadAbleSize());
+  if (ret < 0) {
+    if (input_buffer_.ReadAbleSize() > 0) {
+      message_cb_(shared_from_this(), &input_buffer_);
     }
-  } else {
-    while (sent < total) {
-      ssize_t n = socket_.NonBlockSend(output_buffer_.ReadPosition() + sent,
-                                       total - sent);
-      if (n > 0) {
-        sent += n;
-        continue;
-      }
-      if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
-        channel_.EnableWrite();
-        return;
-      }
-      Release();
-      return;
-    }
-    Release();
-    return;
+    return Release();
   }
-
-  // 全部写完，移动读指针并取消写事件
-  output_buffer_.MoveReadIndex(sent);
-  channel_.DisableWrite();
-  if (status_ == DISCONNECTING)
-    Release();
+  output_buffer_.MoveReadIndex(ret);
+  if (output_buffer_.ReadAbleSize() == 0) {
+    channel_.DisableWrite();
+    if (status_ == DISCONNECTING) {
+      return Release();
+    }
+  }
+  return;
 }
 
 void Connection::HandleClose() {
@@ -232,17 +142,8 @@ void Connection::Release() {
   loop_->QueueInLoop([this]() { ReleaseInLoop(); });
 }
 
-void Connection::FreeSSL() {
-  if (ssl_) {
-    SSL_shutdown(ssl_);
-    SSL_free(ssl_);
-    ssl_ = nullptr;
-  }
-}
-
 void Connection::ReleaseInLoop() {
-  FreeSSL();
-  // status_ = DISCONNECTED;
+  status_ = DISCONNECTED;
   channel_.Remove();
   socket_.Close();
   if (loop_->HasTimer(conn_id_))
@@ -315,39 +216,6 @@ void Connection::CancelInactiveReleaseInLoop() {
     loop_->TimerCancel(conn_id_);
 }
 
-void Connection::DoHandshake() {
-  if (!enable_ssl_) {
-    return;
-  }
-  // 发起或继续 TLS 握手
-  int ret = SSL_do_handshake(ssl_);
-  if (ret == 1) {
-    // 握手完成，切换到正常 I/O
-    status_ = CONNECTED;
-    channel_.DisableRead();
-    channel_.DisableWrite();
-    channel_.SetReadCallback([this]() { HandleRead(); });
-    channel_.SetWriteCallback([this]() { HandleWrite(); });
-    channel_.EnableRead();
-    if (connected_cb_)
-      connected_cb_(shared_from_this());
-    return;
-  }
-
-  // 根据错误类型注册下一步事件
-  int err = SSL_get_error(ssl_, ret);
-  if (err == SSL_ERROR_WANT_READ) {
-    // 还需要读数据才能继续握手
-    channel_.EnableRead();
-  } else if (err == SSL_ERROR_WANT_WRITE) {
-    // 还需要写数据才能继续握手
-    channel_.EnableWrite();
-  } else {
-    // 真正的失败，直接关闭连接
-    Release();
-  }
-}
-
 EventLoop* Connection::GetOwner() {
   return loop_;
 }
@@ -355,15 +223,6 @@ EventLoop* Connection::GetOwner() {
 ssize_t Connection::Recv(void* buf, size_t len) {
   if (status_ != CONNECTED)
     return -1;
-  if (enable_ssl_) {
-    int ret = SSL_read(ssl_, buf, static_cast<int>(len));
-    if (ret > 0)
-      return ret;
-    int err = SSL_get_error(ssl_, ret);
-    if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
-      return 0;
-    return -1;
-  }
   return socket_.NonBlockRecv(buf, len);
 }
 

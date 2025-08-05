@@ -1,7 +1,4 @@
 #pragma once
-
-#include <openssl/err.h>
-#include <openssl/ssl.h>
 #include <functional>
 #include <unordered_map>
 #include "Acceptor.h"
@@ -24,11 +21,7 @@ class TcpServer {
   // explicit TcpServer(int port,const std::string& scrt,const std::string&
   // skey);
 
-  explicit TcpServer(int port,
-                     bool enable_ssl,
-                     const std::string& scrt,
-                     const std::string& skey,
-                     const std::string& ca);
+  explicit TcpServer(int port);
 
   // 设置线程池线程数量
   void SetThreadCount(int count);
@@ -89,7 +82,6 @@ class TcpServer {
   bool enable_inactive_release_;
 
   EventLoop base_loop_;
-  SSL_CTX* ssl_ctx_;
   Acceptor acceptor_;
   LoopThreadPool pool_;
   std::unordered_map<uint64_t, PtrConnection> connections_;
@@ -115,11 +107,6 @@ class TcpServer {
   std::string ver_user_;
   std::string ver_key_;
 
-  bool enable_ssl_;
-  // const std::string& host,
-  //                                                 int port,
-  //                                                 int db,
-  //                                                 bool keep_alive
 };
 
 }  // namespace Xianwei

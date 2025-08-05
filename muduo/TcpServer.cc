@@ -3,63 +3,12 @@
 
 namespace Xianwei {
 
-TcpServer::TcpServer(int port,
-                     bool enable_ssl,
-                     const std::string& scrt,
-                     const std::string& skey,
-                     const std::string& ca)
+TcpServer::TcpServer(int port)
     : port_(port),
       next_id_(0),
       enable_inactive_release_(false),
       acceptor_(&base_loop_, port),
-      pool_(&base_loop_),
-      ssl_ctx_(nullptr),
-      enable_ssl_(enable_ssl) {
-  if (enable_ssl_) {
-    // 初始化SSL
-    SSL_library_init();
-    OpenSSL_add_all_algorithms();
-    SSL_load_error_strings();
-    // 创建SSL
-    ssl_ctx_ = SSL_CTX_new(TLS_server_method());
-    if (!ssl_ctx_) {
-      LOG_ERROR("SSL_CTX_new failed");
-      ERR_print_errors_fp(stderr);
-      abort();
-    }
-    // 加载证书
-    if (SSL_CTX_use_certificate_file(ssl_ctx_, scrt.c_str(),
-                                     SSL_FILETYPE_PEM) != 1) {
-      LOG_ERROR("加载证书失败");
-      ERR_print_errors_fp(stderr);
-      SSL_CTX_free(ssl_ctx_);
-      abort();
-    }
-    // 加载私钥
-    if (SSL_CTX_use_PrivateKey_file(ssl_ctx_, skey.c_str(), SSL_FILETYPE_PEM) !=
-        1) {
-      LOG_ERROR("加载私钥失败");
-      ERR_print_errors_fp(stderr);
-      SSL_CTX_free(ssl_ctx_);
-      abort();
-    }
-    // 校验证书与私钥匹配
-    if (SSL_CTX_check_private_key(ssl_ctx_) != 1) {
-      LOG_ERROR("证书与私钥不匹配");
-      ERR_print_errors_fp(stderr);
-      SSL_CTX_free(ssl_ctx_);
-      abort();
-    }
-    SSL_CTX_set_verify(ssl_ctx_, SSL_VERIFY_PEER, nullptr);
-    if (SSL_CTX_load_verify_locations(ssl_ctx_, ca.c_str(), nullptr) !=
-        1) {
-      LOG_ERROR("加载 CA 失败，用于客户端证书校验");
-      ERR_print_errors_fp(stderr);
-      SSL_CTX_free(ssl_ctx_);
-      abort();
-    }
-    LOG_DEBUG("SSL加载完毕");
-  }
+      pool_(&base_loop_) {
   // 接收FD设置回调函数
   acceptor_.SetAcceptCallback(
       std::bind(&TcpServer::NewConnection, this, std::placeholders::_1));
@@ -104,14 +53,12 @@ void TcpServer::RunAfterInLoop(const Functor& task, int delay) {
 void TcpServer::NewConnection(int fd) {
   next_id_++;
   int buf_size = 1024 * 1024;  // 1MB
-  if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) <
-      0)
+  if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) < 0)
     perror("setsockopt SO_SNDBUF failed");
-  if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size)) <
-      0)
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size)) < 0)
     perror("setsockopt SO_RCVBUF failed");
-  PtrConnection conn = std::make_shared<Connection>(pool_.NextLoop(), next_id_,
-                                                    fd, ssl_ctx_, enable_ssl_);
+  PtrConnection conn =
+      std::make_shared<Connection>(pool_.NextLoop(), next_id_, fd);
   conn->SetMessageCallback(message_callback_);
   conn->SetClosedCallback(closed_callback_);
   conn->SetConnectedCallback(connected_callback_);

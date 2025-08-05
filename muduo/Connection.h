@@ -1,7 +1,5 @@
 // connection.hpp
 #pragma once
-
-#include <openssl/ssl.h>
 #include <functional>
 #include <memory>
 #include "Buffer.h"
@@ -27,15 +25,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   // Connection(EventLoop* loop, uint64_t conn_id, int sockfd, SSL_CTX* ctx);
   Connection(EventLoop* loop,
              uint64_t conn_id,
-             int sockfd,
-             SSL_CTX* ctx,
-             bool enable_ssl);
-
-  Connection(EventLoop* loop,
-             uint64_t conn_id,
-             int sockfd,
-             SSL_CTX* ctx,
-             SSL* ssl);
+             int sockfd);
 
   ~Connection();
 
@@ -72,9 +62,6 @@ class Connection : public std::enable_shared_from_this<Connection> {
   void ShutdownInLoop();
   void EnableInactiveReleaseInLoop(int sec);
   void CancelInactiveReleaseInLoop();
-  void FreeSSL();
-  void DoHandshake();
-  SSL* GetSSL() { return ssl_; }
 
  private:
   uint64_t conn_id_;
@@ -88,9 +75,6 @@ class Connection : public std::enable_shared_from_this<Connection> {
   Buffer output_buffer_;
 
   std::mutex lock_;
-  bool enable_ssl_;
-  SSL_CTX* ssl_ctx_;
-  SSL* ssl_;
 
   ConnectedCallback connected_cb_;
   MessageCallback message_cb_;

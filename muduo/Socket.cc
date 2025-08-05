@@ -71,16 +71,14 @@ int Socket::Accept() {
 
 ssize_t Socket::Recv(void* buf, size_t len, int flag) {
   ssize_t ret = recv(sockfd_, buf, len, flag);
-  if (ret > 0) {
-    return ret;
-  }
-  if (ret == 0) {
-    return 0;
-  }
-  if (errno == EAGAIN || errno == EINTR)
+  if (ret <= 0) {
+    if (errno == EAGAIN || errno == EINTR) {
+      return 0;
+    }
+    LOG_ERROR("socket接受数据失败");
     return -1;
-  LOG_ERROR("接收数据失败: {}", strerror(errno));
-  return -1;
+  }
+  return ret;
 }
 
 ssize_t Socket::NonBlockRecv(void* buf, size_t len) {
@@ -89,13 +87,14 @@ ssize_t Socket::NonBlockRecv(void* buf, size_t len) {
 
 ssize_t Socket::Send(const void* buf, size_t len, int flag) {
   ssize_t ret = send(sockfd_, buf, len, flag);
-  if (ret >= 0)
-    return ret;
-  if (errno == EAGAIN || errno == EINTR) {
+  if (ret < 0) {
+    if (errno == EAGAIN || errno == EINTR) {
+      return 0;
+    }
+    LOG_ERROR("socket发送数据失败");
     return -1;
   }
-  LOG_ERROR("发送数据失败: {}", strerror(errno));
-  return -1;
+  return ret;
 }
 
 ssize_t Socket::NonBlockSend(void* buf, size_t len) {
@@ -121,7 +120,6 @@ bool Socket::CreateServer(uint16_t port, const std::string& ip, bool nonblock) {
     return false;
   if (!Listen())
     return false;
-
   return true;
 }
 
@@ -135,9 +133,9 @@ bool Socket::CreateClient(uint16_t port, const std::string& ip) {
 
 void Socket::ReuseAddress() {
   int val = 1;
-  setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
+  setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, (void*)&val, sizeof(val));
   val = 1;
-  setsockopt(sockfd_, SOL_SOCKET, SO_REUSEPORT, &val, sizeof(val));
+  setsockopt(sockfd_, SOL_SOCKET, SO_REUSEPORT, (void*)&val, sizeof(val));
 }
 
 void Socket::NonBlock() {
