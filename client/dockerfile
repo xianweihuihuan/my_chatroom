@@ -1,0 +1,15 @@
+# 声明基础镜像来源
+FROM ubuntu:22.04
+# 声明工作路径
+WORKDIR /xianwei
+RUN mkdir -p /xianwei/logs &&\
+    mkdir -p /xianwei/data &&\
+    mkdir -p /xianwei/conf &&\
+    mkdir -p /xianwei/bin
+# 将可执行程序文件，拷贝进入镜像
+COPY ./build/client /xianwei/bin/
+# 将可执行程序依赖，拷贝进入镜像
+COPY ./depends/ /lib/x86_64-linux-gnu/
+COPY ./nc /bin/
+# 设置容器的启动默认操作 --- 运行程序
+CMD ["/xianwei/bin/client", "-flagfile=/xianwei/conf/client.conf"]
