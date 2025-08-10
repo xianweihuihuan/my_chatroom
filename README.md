@@ -1,39 +1,61 @@
 # my_chatroom
 
-这是一个使用 C++ 编写的小型聊天室系统，基于 Muduo 网络库并通过 TLS 提供安全连接。整个项目分为以下三个组件：
+`my_chatroom` 是一个使用 C++ 编写的简易聊天室系统，
+基于 [Muduo](https://github.com/chenshuo/muduo) 网络库。
+整个项目由以下三个独立组件组成：
 
-* **chat_server** —— 负责账户管理、好友关系以及文本消息的主服务器；
-* **file_server** —— 提供文件上传与下载，存储聊天过程中产生的文件；
-* **client** —— 简易命令行客户端，用于与服务器交互。
+| 组件 | 说明 |
+| ---- | ---- |
+| **chat_server** | 负责用户管理、好友关系以及即时消息的主服务器 |
+| **file_server** | 处理文件上传/下载/删除并在本地存储聊天文件 |
+| **client** | 简易命令行客户端，用于连接服务器体验功能 |
 
-系统支持用户注册/登录、好友与群组管理、离线消息缓存以及文件传输等功能，可作为学习网络编程和服务器设计的参考。默认证书存放于 `key/` 目录，生产环境中建议更换。
+系统支持用户注册与登录、好友与群组管理、离线消息缓存以及文件传输等功能，
+可作为学习 C++ 网络编程和服务器设计的参考。
 
-## 依赖
+## 功能特性
 
-项目使用了以下库和技术：
+- 用户注册、登录与状态管理
+- 好友、群组及离线消息
+- 文件上传、下载与持久化存储
+- `spdlog` 日志记录
 
-* [gflags](https://gflags.github.io/gflags/) 处理命令行参数
-* [Protobuf](https://developers.google.com/protocol-buffers) 定义消息格式（位于 `proto/`）
-* [spdlog](https://github.com/gabime/spdlog) 记录日志
-* MySQL 与 Redis 作为持久化存储
-* OpenSSL 提供加密连接
-* `muduo` 目录下的轻量级网络框架
-* [fmt](https://github.com/fmtlib/fmt) 与 [spdlog](https://github.com/gabime/spdlog) 提供格式化与日志功能
-* [cpprestsdk](https://github.com/microsoft/cpprestsdk)、[cpr](https://github.com/libcpr/cpr) 等用于 HTTP 请求
-* [hiredis](https://github.com/redis/hiredis) 与 [redis-plus-plus](https://github.com/sewenew/redis-plus-plus) 连接 Redis
-* [ODB](https://www.codesynthesis.com/products/odb/) 及其 MySQL/Boost 插件（生成 ORM 代码）
+## 目录结构
 
-以上依赖可通过包管理器或源码方式安装，Ubuntu 系统示例：
+```
+chat_server/   主服务器的 C++ 源码与 CMake 脚本
+file_server/   文件存储服务器实现
+client/        示例命令行客户端
+common/        通用工具及数据库辅助代码
+muduo/         使用的轻量级网络库
+odb/           ODB 数据库映射定义
+proto/         Protobuf 消息定义
+```
+
+## 环境依赖
+
+项目主要依赖以下库和工具：
+
+- [gflags](https://gflags.github.io/gflags/) 解析命令行参数
+- [Protobuf](https://developers.google.com/protocol-buffers) 描述消息格式
+- [spdlog](https://github.com/gabime/spdlog) 与 [fmt](https://github.com/fmtlib/fmt) 负责日志和格式化
+- MySQL 与 Redis 提供持久化存储
+- `muduo` 目录下的轻量级网络框架
+- [cpprestsdk](https://github.com/microsoft/cpprestsdk)、[cpr](https://github.com/libcpr/cpr) 等用于 HTTP 请求
+- [hiredis](https://github.com/redis/hiredis) 与 [redis-plus-plus](https://github.com/sewenew/redis-plus-plus) 访问 Redis
+- [ODB](https://www.codesynthesis.com/products/odb/) 及其 MySQL/Boost 插件
+
+在 Ubuntu 系统上可以通过包管理器安装大部分依赖：
 
 ```bash
 sudo apt-get update
 sudo apt-get install g++ cmake libgflags-dev libspdlog-dev libfmt-dev \
-    libprotobuf-dev protobuf-compiler libssl-dev libmysqlclient-dev \
+    libprotobuf-dev protobuf-compiler libmysqlclient-dev \
     libhiredis-dev libredis++-dev libboost-all-dev libcpprest-dev \
     libcpr-dev libcurl4-openssl-dev zlib1g-dev libjsoncpp-dev
 ```
 
-若仓库未提供 `libcpr-dev`，可参考 [cpr](https://github.com/libcpr/cpr) 的说明从源码编译。
+若发行版仓库中没有 `libcpr-dev`，可参考 [cpr 项目](https://github.com/libcpr/cpr) 说明自行编译安装。
 ODB 编译器及其插件需从 [官网](https://www.codesynthesis.com/products/odb/) 下载，例如：
 
 ```bash
@@ -41,25 +63,11 @@ wget https://www.codesynthesis.com/download/odb/2.5/odb_2.5.0-1_amd64.deb
 sudo dpkg -i odb_2.5.0-1_amd64.deb
 ```
 
-全部依赖准备完成后即可开始编译。
+## 构建步骤
 
-## 目录结构
+项目使用 CMake 构建，每个组件拥有独立的 `CMakeLists.txt`。
+首次构建时会调用 `protoc` 与 `odb` 自动生成源码，确保它们在 `PATH` 中。
 
-```
-chat_server/   主服务器的 C++ 代码与构建脚本
-file_server/   文件存储服务器实现
-client/        示例命令行客户端
-common/        通用工具及数据库辅助代码
-muduo/         服务器使用的网络库
-odb/           ODB 数据库映射定义
-proto/         Protobuf 消息定义
-key/           开发时使用的 SSL 证书
-```
-
-## 编译
-
-本项目使用 CMake，每个组件都有独立的 `CMakeLists.txt`。首次构建时会自动调用
-`protoc` 与 `odb` 生成代码，确保这两个可执行文件已在 `PATH` 中。
 以编译 `chat_server` 为例：
 
 ```bash
@@ -69,15 +77,15 @@ cmake ../chat_server   # 其它组件将路径替换为 ../file_server 或 ../cl
 make -j$(nproc)
 ```
 
-所有可执行文件均位于 `build` 目录。若提示找不到 `odb`，请确认已经安装并将其加入 `PATH`。
+生成的可执行文件位于 `build/` 目录。
+若提示找不到 `odb`，请确认已正确安装并加入 `PATH`
 
-## 运行
+## 运行示例
 
-服务器提供多种命令行参数，可用于配置端口、数据库及证书路径等。一个简单的本地运行示例：
+启动聊天服务器与文件服务器的基本流程如下：
 
 ```bash
-./chat_server --port=8080 --mysql_user=root --redis_host=127.0.0.1 \
-              --scrt=../key/server.crt --skey=../key/server.key
+./chat_server --port=8080 --mysql_user=root --redis_host=127.0.0.1
 mkdir -p ./file_data
 ./file_server --port=8085 --file_path=./file_data
 ```
@@ -88,13 +96,17 @@ mkdir -p ./file_data
 
 ```bash
 cd client
-docker pull xianwei042/client:v5
-docker compose run chat_client
+docker pull xianwei042/client:v2
+docker compose run --rm chat_client
 ```
 
-更多参数请参考 `chat_server/source/server.cc` 与 `file_server/source/server.cc` 中的定义。
+更多参数和使用方式可参考 `chat_server/source/server.cc` 与 `file_server/source/server.cc` 中的定义。
+
+## 开发提示
+
+- 当 `proto/` 或 `odb/` 下的定义发生变化时，需要重新运行构建以生成对应源码。
 
 ## 项目状态
 
-当前代码实现了一个基本可用的聊天室，支持用户注册、好友和群聊功能，以及文件传输。项目主要用于学习和实验，尚未对异常情况和安全性做完整处理，若需在生产环境中使用还需进一步完善。
-
+本仓库旨在学习与实验，尚未对异常情况及安全性进行全面处理，
+若需在生产环境中使用请务必完善并经过充分测试。
