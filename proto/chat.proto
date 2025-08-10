@@ -101,6 +101,8 @@ enum ClientMessageType{
     GroupHistoryMessageRspType = 41;
     UserDelSelfRspType = 42;
     FriendOffNoticeType = 43;
+    SovelFriendApplyNoticeType = 44;
+    SovelGroupApplyNoticeType = 45;
 }
 
 //----------------------------
@@ -145,6 +147,17 @@ message MemberInfo{
     string user_id = 2;
     string name = 3;
 }
+
+message FriendSovel{
+    bool agree = 1;
+    string name = 2;
+}
+
+message GroupSovel{
+    bool agree = 1;
+    string name = 2;
+}
+
 //用户名登录 
 message UserLoginReq {
     string nickname = 1;
@@ -157,6 +170,8 @@ message UserLoginRsp {
     string email = 4;
     repeated MessageofFriend friend = 5;
     repeated MessageofSession session = 6;
+    repeated FriendSovel friend_sovel = 7;
+    repeated GroupSovel group_sovel = 8;
 }
 
 message MessageofSend{
@@ -189,6 +204,8 @@ message EmailLoginRsp {
     string email = 4;
     repeated MessageofFriend friend = 5;
     repeated MessageofSession session = 6;
+    repeated FriendSovel friend_sovel = 7;
+    repeated GroupSovel group_sovel = 8;
 }
 
 message GetUserInfoReq {
@@ -286,6 +303,11 @@ message SovelFriendApplyRsp{
     bool success = 1;
     string errmsg = 2;
 }
+message SovelFriendNotice{
+    bool agree = 1;
+    string user_name = 2;
+}
+
 
 message IgnoreFriendReq{
     string user_id = 1;
@@ -355,12 +377,14 @@ message FriendSendFileReq{
     string user_id = 1;
     string peer_id = 2;
     string file_name = 3;
+    string file_sum = 4;
 }
 message FriendSendFileRsp{
     bool success = 1;
     string errmsg = 2;
     string file_id = 3;
     bool ifexist = 4;
+    string message_name = 5;
 }
 
 message FriendGetFileReq{
@@ -426,6 +450,10 @@ message SovelGroupApplyReq{
 message SovelGroupApplyRsp{
     bool success = 1;
     string errmsg  = 2;
+}
+message SovelGroupNotice{
+    bool agree = 1;
+    string name = 2;
 }
 
 message GetMemberListReq{
@@ -652,5 +680,7 @@ message ClientMessage{
         GroupHistoryMessageRsp group_history_message_rsp = 43;
         UserDelSelfRsp user_del_self_rsp = 44;
         FriendOffNotice friend_off_notice = 45;
-    }
+        SovelFriendNotice sovel_friend_apply_notice = 46;
+        SovelGroupNotice sovel_group_apply_notice = 47;
+    }   
 }
