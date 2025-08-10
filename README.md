@@ -73,7 +73,7 @@ sudo dpkg -i odb_2.5.0-1_amd64.deb
 ```bash
 mkdir build
 cd build
-cmake ..   # 其它组件将路径替换为 ../file_server 或 ../client
+cmake ..  
 make 
 ```
 
