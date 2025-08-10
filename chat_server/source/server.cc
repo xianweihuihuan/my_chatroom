@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
   Xianwei::file_server_ip = FLAGS_file_ip;
   Xianwei::file_server_port = FLAGS_file_port;
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  Xianwei::TcpServer sp(FLAGS_port, true, FLAGS_scrt, FLAGS_skey,FLAGS_ca);
+  Xianwei::TcpServer sp(FLAGS_port);
   sp.SetMessageCallback(Xianwei::OnMessage);
   sp.SetClosedCallback(Xianwei::Onclose);
   auto cache_mysql = Xianwei::ODBFactory::Create(
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
   auto re = Xianwei::RedisClientFactory::Create(
       FLAGS_redis_host, FLAGS_redis_port, FLAGS_redis_db,
       FLAGS_redis_keepalive);
-  Xianwei::cache = std::make_shared<Xianwei::MessageCache>(re, tt);
+  Xianwei::cache = std::make_shared<Xianwei::MessageCache>(re, tt,5000);
   sp.SetMysqlMessage(FLAGS_mysql_user, FLAGS_mysql_pswd, FLAGS_mysql_host,
                      FLAGS_mysql_db, FLAGS_mysql_cset, FLAGS_mysql_port,
                      FLAGS_mysql_pool_count);
@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
   sp.SetVerMessage(FLAGS_ver_username, FLAGS_ver_pswd);
   sp.SetThreadCount(10);
   sp.EnableInactiveRelease(300);
-  Xianwei::task_pool = std::make_shared<Xianwei::thread_pool>(30);
+  //Xianwei::task_pool = std::make_shared<Xianwei::thread_pool>(10);
   std::thread flush([]() {
     while (true) {
       std::this_thread::sleep_for(std::chrono::seconds(5));
