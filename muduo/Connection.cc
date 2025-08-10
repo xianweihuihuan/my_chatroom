@@ -11,6 +11,7 @@ Connection::Connection(EventLoop* loop, uint64_t conn_id, int sockfd)
       status_(CONNECTING),
       socket_(sockfd),
       channel_(loop, sockfd) {
+  socket_.NonBlock();
   channel_.SetCloseCallback([this]() { HandleClose(); });
   channel_.SetEventCallback([this]() { HandleEvent(); });
   channel_.SetReadCallback([this]() { HandleRead(); });
@@ -84,36 +85,40 @@ void Connection::EstablishedInLoop() {
 }
 
 void Connection::HandleRead() {
-  char buf[65535];
-  ssize_t ret = socket_.NonBlockRecv(buf, 65535);
-  if (ret < 0) {
-    return ShutdownInLoop();
-  }
-  input_buffer_.WriteAndPush(buf, ret);
-  if (input_buffer_.ReadAbleSize() > 0) {
-    if (message_cb_) {
-      return message_cb_(shared_from_this(), &input_buffer_);
-    }
+  int savedErrno = 0;
+  ssize_t n = input_buffer_.readFd(channel_.Fd(), &savedErrno);
+  if (n > 0)
+    message_cb_(shared_from_this(), &input_buffer_);
+  else if (n == 0)
+    HandleClose();
+  else {
+    errno = savedErrno;
+    LOG_ERROR("TcpConnection::handleRead");
+    HandleError();
   }
 }
 
 void Connection::HandleWrite() {
-  ssize_t ret = socket_.NonBlockSend(output_buffer_.ReadPosition(),
-                                     output_buffer_.ReadAbleSize());
-  if (ret < 0) {
-    if (input_buffer_.ReadAbleSize() > 0) {
-      message_cb_(shared_from_this(), &input_buffer_);
+  if (channel_.IsWriting()) {
+    ssize_t n = ::write(channel_.Fd(), output_buffer_.ReadPosition(),
+                        output_buffer_.ReadAbleSize());
+    LOG_INFO("写入数据");
+    if (n > 0) {
+      output_buffer_.MoveReadIndex(n);
+      if (output_buffer_.ReadAbleSize() == 0) {
+        channel_.DisableWrite();
+        if (status_ == DISCONNECTING) {
+          ShutdownInLoop();
+        }
+      } else {
+        LOG_TRACE("I am going to write more data");
+      }
+    } else {
+      LOG_ERROR("TcpConnection::handleWrite");
     }
-    return Release();
+  } else {
+    LOG_TRACE("Connection is down,no more writing");
   }
-  output_buffer_.MoveReadIndex(ret);
-  if (output_buffer_.ReadAbleSize() == 0) {
-    channel_.DisableWrite();
-    if (status_ == DISCONNECTING) {
-      return Release();
-    }
-  }
-  return;
 }
 
 void Connection::HandleClose() {
@@ -154,27 +159,45 @@ void Connection::ReleaseInLoop() {
     srv_closed_cb_(shared_from_this());
 }
 
-void Connection::Send(const char* data, size_t len) {
-  Buffer buf;
-  buf.WriteAndPush(data, len);
-  SendInLoop(buf);
-}
+// void Connection::Send(const char* data, size_t len) {
+//   Buffer buf(1024);
+//   buf.WriteAndPush(data, len);
+//   SendInLoop(buf);
+// }
 
-void Connection::SendB(const char* data, size_t len) {
-  Buffer buf;
-  buf.WriteAndPush(data, len);
-  loop_->RunInLoop([this, buf]() mutable { SendInLoop(buf); });
-}
-
-void Connection::SendInLoop(Buffer& buf) {
-  if (status_ == DISCONNECTED)
-    return;
-  {
-    std::unique_lock<std::mutex> mtx(lock_);
-    output_buffer_.WriteAndPush(buf);
+void Connection::Send(const std::string& buf) {
+  if (loop_->IsInLoopThread()) {
+    SendInLoop(buf);
+  } else {
+    loop_->RunInLoop([this, buf](){ SendInLoop(buf); });
   }
-  if (!channel_.IsWriting())
-    channel_.EnableWrite();
+}
+
+void Connection::SendInLoop(const std::string& buf) {
+  // if (status_ == DISCONNECTED)
+  //   return;
+  // {
+  //   std::unique_lock<std::mutex> mtx(lock_);
+  //   output_buffer_.WriteAndPush(buf);
+  // }
+  // if (!channel_.IsWriting())
+  //   channel_.EnableWrite();
+  loop_->AssertInLoopThread();
+  ssize_t nwrote = 0;
+  if (!channel_.IsWriting() && output_buffer_.ReadAbleSize() == 0) {
+    nwrote = ::write(channel_.Fd(), buf.data(), buf.size());
+    LOG_INFO("写入数据");
+    if (nwrote >= 0) {
+    } else {
+      nwrote = 0;
+    }
+  }
+  if (static_cast<size_t>(nwrote) < buf.size()) {
+    output_buffer_.WriteAndPush(buf.data() + nwrote, buf.size() - nwrote);
+    if(!channel_.IsWriting()){
+      channel_.EnableWrite();
+    }
+  }
 }
 
 void Connection::Shutdown() {

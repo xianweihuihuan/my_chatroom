@@ -96,4 +96,27 @@ std::string Buffer::GetLineAndPop() {
   MoveReadIndex(ret.size());
   return std::move(ret);
 }
+
+ssize_t Buffer::readFd(int fd, int* savedErrno) {
+  char extrabuf[65536];
+  struct iovec vec[2];
+  const size_t writable = TailFreeSize();
+
+  vec[0].iov_base = Begin() + write_index_;
+  vec[0].iov_len = writable;
+  vec[1].iov_base = extrabuf;
+  vec[1].iov_len = sizeof extrabuf;
+
+  const ssize_t n = readv(fd, vec, 2);
+  if (n < 0) {
+    *savedErrno = errno;
+  } else if (static_cast<size_t>(n) <= writable) {
+    write_index_ += n;
+  } else {
+    write_index_ = buffer_.size();
+    WriteAndPush(extrabuf, n - writable);
+  }
+  return n;
+}
+
 }  // namespace Xianwei

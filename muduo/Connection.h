@@ -41,8 +41,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   ssize_t Recv(void* buf, size_t len);
 
   void Established();
-  void Send(const char* data, size_t len);
-  void SendB(const char* data, size_t len);
+  void Send(const std::string& buf);
   void Shutdown();
   void Release();
   void EnableInactiveRelease(int sec);
@@ -58,7 +57,7 @@ class Connection : public std::enable_shared_from_this<Connection> {
   void HandleEvent();
   void EstablishedInLoop();
   void ReleaseInLoop();
-  void SendInLoop(Buffer& buf);
+  void SendInLoop(const std::string& buf);
   void ShutdownInLoop();
   void EnableInactiveReleaseInLoop(int sec);
   void CancelInactiveReleaseInLoop();

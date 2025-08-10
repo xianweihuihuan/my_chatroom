@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <string>
+#include <sys/uio.h>
 #include "logger.h"
 
 namespace Xianwei {
@@ -12,6 +13,8 @@ namespace Xianwei {
 class Buffer {
  public:
   Buffer() : buffer_(BUFFER_DEFAULT_SIZE), read_index_(0), write_index_(0) {}
+
+  Buffer(int sum) : buffer_(sum), read_index_(0), write_index_(0) {}
 
   char* Begin() { return &*buffer_.begin(); }
   char* ReadPosition() { return Begin() + read_index_; }
@@ -43,6 +46,8 @@ class Buffer {
   std::string GetLineAndPop();
 
   void Clear() { read_index_ = write_index_ = 0; }
+
+  ssize_t readFd(int fd, int* savedErrno);
 
  private:
   std::vector<char> buffer_;
