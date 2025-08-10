@@ -16,10 +16,6 @@ DEFINE_string(file_dir, "./file_data", "本地文件储存目录");
 int main(int argc, char* argv[]) {
   google::ParseCommandLineFlags(&argc, &argv, true);
   Xianwei::init_logger(FLAGS_run_mode, FLAGS_log_file, FLAGS_log_level);
-  // 1. 初始化 OpenSSL
-  SSL_library_init();
-  SSL_load_error_strings();
-  OpenSSL_add_all_algorithms();
   file_ip = FLAGS_server_ip;
   file_port = FLAGS_file_port;
   file_dir = FLAGS_file_dir;
@@ -27,33 +23,9 @@ int main(int argc, char* argv[]) {
   if (file_dir.back() != '/') {
     file_dir += '/';
   }
-  // 2. 创建 SSL_CTX 并加载 CA
-  ctx = SSL_CTX_new(TLS_client_method());
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
-  if (SSL_CTX_load_verify_locations(ctx, FLAGS_ca_path.c_str(), nullptr) != 1) {
-    LOG_ERROR("加载CA证书失败");
-    ERR_print_errors_fp(stderr);
-    SSL_CTX_free(ctx);
-    return 1;
-  }
-  Xianwei::Socket so;
-  so.CreateClient(FLAGS_server_port, FLAGS_server_ip);
-  // 4. 绑定 SSL 并握手
-  int buf_size = 1024 * 1024;  // 1MB
-  if (setsockopt(so.Fd(), SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) <
-      0)
-    perror("setsockopt SO_SNDBUF failed");
-  if (setsockopt(so.Fd(), SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size)) <
-      0)
-    perror("setsockopt SO_RCVBUF failed");
-  ssl = SSL_new(ctx);
-  SSL_set_fd(ssl, so.Fd());
-  sockfd = so.Fd();
-  if (SSL_connect(ssl) != 1) {
-    LOG_ERROR("SSL连接失败");
-    ERR_print_errors_fp(stderr);
-    return 2;
-  }
+  sock = std::make_shared<Xianwei::Socket>();
+  sock->CreateClient(FLAGS_server_port, FLAGS_server_ip);
+  //pool = std::make_shared<Xianwei::thread_pool>(30);
   vcodefd = eventfd(0, EFD_CLOEXEC);
   selfefd = eventfd(0, EFD_CLOEXEC);
   friendefd = eventfd(0, EFD_CLOEXEC);

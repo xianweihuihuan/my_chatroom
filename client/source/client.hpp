@@ -19,6 +19,7 @@
 #include "Connection.h"
 #include "chat.pb.h"
 #include "file.pb.h"
+#include "thread_pool.hpp"
 
 #define Tail "\033[m"
 #define Cyan "\033[0m\033[1;36m"
@@ -36,9 +37,7 @@ bool vsuccess;
 bool groupsuccess;
 bool friendsuccess;
 bool selfsuccess;
-SSL_CTX* ctx;
-int sockfd;
-SSL* ssl;
+std::shared_ptr<Xianwei::Socket> sock;
 bool deletefriend = false;
 bool cancelgroup = false;
 std::string vid;
@@ -53,6 +52,7 @@ std::string get_file_id;
 int file_port;
 std::string file_ip;
 bool filexist;
+std::string message_name;
 std::string file_dir;
 std::atomic<bool> running{true};
 std::vector<Xianwei::UserInfo> friend_apply;
@@ -67,6 +67,7 @@ std::mutex sendlock;
 std::string sfile_dir = "/xianwei/file";
 std::shared_ptr<std::thread> heart;
 std::shared_ptr<std::thread> react;
+std::shared_ptr<Xianwei::thread_pool> pool;
 bool iflogin;
 namespace Xianwei {
 
@@ -88,7 +89,6 @@ void ReturnChat() {
       react->join();
     }
   }
-  OPENSSL_cleanup();
   google::protobuf::ShutdownProtobufLibrary();
 }
 
@@ -106,36 +106,37 @@ bool Check_password(const std::string& password) {
 }
 
 std::string sha256_file(const std::string& filename) {
-    std::ifstream file(filename, std::ios::binary);
-    if (!file)
-        throw std::runtime_error("无法打开文件");
+  std::ifstream file(filename, std::ios::binary);
+  if (!file)
+    throw std::runtime_error("无法打开文件");
 
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    if (!ctx)
-        throw std::runtime_error("无法创建 EVP_MD_CTX");
+  EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+  if (!ctx)
+    throw std::runtime_error("无法创建 EVP_MD_CTX");
 
-    const EVP_MD* md = EVP_sha256();
-    if (EVP_DigestInit_ex(ctx, md, nullptr) != 1)
-        throw std::runtime_error("EVP_DigestInit_ex 失败");
+  const EVP_MD* md = EVP_sha256();
+  if (EVP_DigestInit_ex(ctx, md, nullptr) != 1)
+    throw std::runtime_error("EVP_DigestInit_ex 失败");
 
-    char buffer[8192];
-    while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
-        if (EVP_DigestUpdate(ctx, buffer, file.gcount()) != 1)
-            throw std::runtime_error("EVP_DigestUpdate 失败");
-    }
+  char buffer[8192];
+  while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
+    if (EVP_DigestUpdate(ctx, buffer, file.gcount()) != 1)
+      throw std::runtime_error("EVP_DigestUpdate 失败");
+  }
 
-    unsigned char hash[EVP_MAX_MD_SIZE];
-    unsigned int length = 0;
-    if (EVP_DigestFinal_ex(ctx, hash, &length) != 1)
-        throw std::runtime_error("EVP_DigestFinal_ex 失败");
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int length = 0;
+  if (EVP_DigestFinal_ex(ctx, hash, &length) != 1)
+    throw std::runtime_error("EVP_DigestFinal_ex 失败");
 
-    EVP_MD_CTX_free(ctx);
+  EVP_MD_CTX_free(ctx);
 
-    std::ostringstream oss;
-    for (unsigned int i = 0; i < length; ++i)
-        oss << std::hex << std::setw(2) << std::setfill('0') << (unsigned int)hash[i];
+  std::ostringstream oss;
+  for (unsigned int i = 0; i < length; ++i)
+    oss << std::hex << std::setw(2) << std::setfill('0')
+        << (unsigned int)hash[i];
 
-    return oss.str();
+  return oss.str();
 }
 
 bool Check_email(const std::string& address) {
@@ -146,15 +147,12 @@ bool Check_email(const std::string& address) {
 
 void SendToServerB(const std::string body) {
   std::string message = std::to_string(body.size()) + "\r\n" + body;
-  int i = SSL_write(ssl, message.c_str(), message.size());
+  int i = sock->Send(message.c_str(), message.size());
 }
 
 void SendToServer(const std::string body) {
   std::string message = std::to_string(body.size()) + "\r\n" + body;
-  {
-    std::unique_lock<std::mutex> mtx(sendlock);
-    conn->Send(message.c_str(), message.size());
-  }
+  conn->Send(message);
 }
 
 void Heart() {
@@ -534,6 +532,7 @@ void HandleMessage(const ClientMessage& msg) {
           std::unique_lock<std::mutex> mtx(sendfileidlock);
           send_file_id = msg.friend_send_file_rsp().file_id();
           filexist = msg.friend_send_file_rsp().ifexist();
+          message_name = msg.friend_send_file_rsp().message_name();
         }
         friendsuccess = true;
       } else {
@@ -955,6 +954,7 @@ void Recv(const PtrConnection& conn, Buffer* buf) {
     ClientMessage msg;
     if (!msg.ParseFromString(data))
       continue;
+    // pool->Enter(HandleMessage, msg);
     HandleMessage(msg);
   }
 }
@@ -962,7 +962,7 @@ void Recv(const PtrConnection& conn, Buffer* buf) {
 void React() {
   react = std::make_shared<std::thread>([]() {
     loop = std::make_shared<EventLoop>();
-    conn = std::make_shared<Connection>(loop.get(), 42, sockfd, ctx, ssl);
+    conn = std::make_shared<Connection>(loop.get(), 42, sock->Fd());
     // conn = std::make_shared<Connection>(loop.get(), 42, sockfd, nullptr,
     // false);
     conn->SetMessageCallback(Recv);
@@ -1046,7 +1046,7 @@ void UserRegister() {
   SendToServerB(req.SerializeAsString());
   while (true) {
     char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
+    int sz = sock->Recv(buf, sizeof(buf));
     buffer.WriteAndPush(buf, sz);
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
@@ -1093,7 +1093,7 @@ void UserRegister() {
   SendToServerB(regreq.SerializeAsString());
   while (true) {
     char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
+    int sz = sock->Recv(buf, sizeof(buf));
     buffer.WriteAndPush(buf, sz);
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
@@ -1732,6 +1732,7 @@ void FriendSendFile(const int& num) {
   SendToServer(req.SerializeAsString());
   std::string tmp_file_id;
   bool tmp_file_exist;
+  std::string tmp_message_name;
   ReadEventfd(friendefd);
   if (!friendsuccess) {
     return;
@@ -1740,7 +1741,9 @@ void FriendSendFile(const int& num) {
     std::unique_lock<std::mutex> mtx(sendfileidlock);
     tmp_file_id = send_file_id;
     tmp_file_exist = filexist;
+    tmp_message_name = message_name;
   }
+  std::cout << tmp_file_id << std::endl;
   bool ifcontinue;
   if (tmp_file_exist) {
     int flag = 0;
@@ -1774,7 +1777,7 @@ void FriendSendFile(const int& num) {
   } else {
     ifcontinue = false;
   }
-  std::thread send_file([file, tmp_file_id, ifcontinue, num, p]() {
+  std::thread send_file([file, tmp_file_id, ifcontinue, num, p,tmp_message_name]() {
     Socket fs;
     fs.CreateClient(file_port, file_ip);
     FileServer req;
@@ -1877,7 +1880,7 @@ void FriendSendFile(const int& num) {
         friend_list[num - 1].user_id());
     auto me = creq.mutable_friend_send_message_req()->mutable_message();
     me->set_message_type(MessageType::file);
-    me->set_body(p.filename());
+    me->set_body(tmp_message_name);
     SendToServer(creq.SerializeAsString());
   });
   send_file.detach();
@@ -1984,7 +1987,7 @@ void FriendGetFile(const int& num) {
         }
         while (true) {
           ssize_t sz = fg.Recv(buff, sizeof(buff));
-          if (sz == 0) {
+          if (sz == -1) {
             std::cout << Green << "文件下载成功" << Tail << std::endl;
             out.close();
             break;
@@ -3340,11 +3343,14 @@ void UserLogin() {
   req.set_type(ServerMessageType::UserLoginReqType);
   req.mutable_user_login_req()->set_nickname(nickname);
   req.mutable_user_login_req()->set_password(password);
+  std::cout << "11111111111111111111111111111111\n";
   SendToServerB(req.SerializeAsString());
+  std::cout << "22222222222222222222222222222222222222\n";
   while (true) {
     char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
+    int sz = sock->Recv(buf, sizeof(buf));
     // int sz = recv(sockfd, buf, sizeof(buf), 0);
+    std::cout << sz << std::endl;
     buffer.WriteAndPush(buf, sz);
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
@@ -3442,7 +3448,7 @@ void EmailLogin() {
   SendToServerB(req.SerializeAsString());
   while (true) {
     char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
+    int sz = sock->Recv(buf, sizeof(buf));
     buffer.WriteAndPush(buf, sz);
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
@@ -3487,7 +3493,7 @@ void EmailLogin() {
   SendToServerB(regreq.SerializeAsString());
   while (true) {
     char buf[10000];
-    int sz = SSL_read(ssl, buf, sizeof(buf));
+    int sz = sock->Recv(buf, sizeof(buf));
     buffer.WriteAndPush(buf, sz);
     std::string lenLine = buffer.GetLine();
     if (lenLine.empty()) {
