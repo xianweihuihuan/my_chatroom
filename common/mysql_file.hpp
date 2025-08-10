@@ -15,8 +15,8 @@ class FileTable {
       db_->persist(file);
       trans.commit();
     } catch (const std::exception& e) {
-      LOG_ERROR("新增文件信息失败{}:{} - {}", file.SessionId(), file.UserId(),
-                file.FileName());
+      LOG_ERROR("新增文件信息失败{}:{} - {},{}", file.SessionId(), file.UserId(),
+                file.FileName(),e.what());
       return false;
     }
     return true;
@@ -40,6 +40,44 @@ class FileTable {
     } catch (const std::exception& e) {
       LOG_ERROR("获取文件编号失败");
       return std::string();
+    }
+    return ret;
+  }
+
+  std::shared_ptr<File> SelectbyName(const std::string& sid,
+                                     const std::string& uid,
+                                     const std::string& file_name) {
+    std::shared_ptr<File> ret;
+    try {
+      odb::transaction trans(db_->begin());
+      typedef odb::query<File> query;
+      typedef odb::result<File> result;
+      ret.reset(db_->query_one<File>(query::user_id == uid &&
+                                     query::session_id == sid &&
+                                     query::file_name == file_name));
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取文件失败,{}", e.what());
+      return nullptr;
+    }
+    return ret;
+  }
+
+  std::shared_ptr<File> SelectbySum(const std::string& sid,
+                                    const std::string& uid,
+                                    const std::string& file_sum) {
+    std::shared_ptr<File> ret;
+    try {
+      odb::transaction trans(db_->begin());
+      typedef odb::query<File> query;
+      typedef odb::result<File> result;
+      ret.reset(db_->query_one<File>(query::user_id == uid &&
+                                     query::session_id == sid &&
+                                     query::file_sum == file_sum));
+      trans.commit();
+    } catch (const std::exception& e) {
+      LOG_ERROR("获取文件失败,{}", e.what());
+      return nullptr;
     }
     return ret;
   }

@@ -24,9 +24,6 @@ void MessageCache::Append(const Message& msg) {
     std::unique_lock<std::mutex> lock(mutex_);
     client_->rpush("cache:messages", data);
     ++count_;
-    if (count_ >= threshold_) {
-      FlushLocked();
-    }
   } catch (const std::exception& e) {
     LOG_ERROR("Redis 缓存消息失败:{}", e.what());
   }

@@ -147,6 +147,7 @@ void OnMessage(const int fd) {
       }
       LOG_ERROR("文件传输完毕");
       close(file_fd);
+      close(fd);
       break;
     }else if(msg.type() == FileServerType::FileDelReqType){
       auto req = msg.file_del_req();
